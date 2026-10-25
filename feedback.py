@@ -36,18 +36,15 @@ Rules:
   If you quote, quote exactly.
 - Do not praise generically ("great job", "well done") without saying what, exactly, was good.
 - Give advice specific to THIS piece of work. Avoid stock advice that would fit any student's work.
-- Judge the work against the rubric/standards provided. If a proficiency scale is given, use only the row
-  for the student's grade, say in plain words which level the work is closest to, and what would move it up.
-  If no scale is given, do not mention levels such as Emerging, Developing, Proficient or Extending.
+- Judge the work against the rubric/standards provided. If a proficiency scale is given, use only the row for the
+  student's grade to understand what stronger work looks like, and describe in plain words what the work shows and
+  what would make it stronger.
+- Only the teacher assigns levels. Never name or suggest a proficiency level (Emerging, Developing, Proficient,
+  Extending, or a "+" level), and never say which level the work is at or is closest to.
 - If the teacher has set a level for this work, treat it as settled: write feedback consistent with it, explain what in
-  the work shows that level, and what would move it to the next one. Never contradict or second-guess it.
-- When you name a level or say what would move the work up, use the school's value-statement wording for that level:
-  Emerging = "begins to", "partial"; Developing = "somewhat", "adequately"; Proficient = "substantial", "a range of";
-  Extending = "thorough", "a wide range of". Describe the next step in the wording of the level above (e.g. from
-  adequately to substantial). Only do this when a scale is given and the teacher has NOT set a level; when the
-  teacher has set one, that wording is added for you, so follow the teacher's instructions about which words to avoid.
-- A "+" level (e.g. Proficient+) means consistent, high-end learning at that level; the base level means solid learning
-  with some inconsistencies. Use that meaning if you talk about a "+" level, and never describe "+" as a different level.
+  the work shows that level, and what would move it to the next one. Never contradict or second-guess it. A "+" level
+  (e.g. Proficient+) means consistent, high-end learning at that level; the base level means solid learning with some
+  inconsistencies. A sentence naming the level is added for you, so do not name it yourself.
 - Command terms: if the assignment or rubric uses a command term (describe, explain, justify, analyse, compare and
   contrast, discuss, evaluate, list, identify), check whether the student's response does that kind of thinking.
   Describe = what happens; Explain = why it happens (reasons or causes); Justify = valid reasons or evidence for a
@@ -144,6 +141,13 @@ def wrong_level_words(text, words):
     own = re.sub(r"[\"\u201c][^\"\u201d]*[\"\u201d]", " ", text)
     return [w for w in words if re.search(r"\b" + re.escape(w) + r"\b", own, flags=re.I)]
 
+def named_levels(text):
+    """Level names in the model's own wording: only the teacher assigns levels. A capitalised level name mid-sentence
+    ("at the Proficient level") or with a "+" counts; "Developing your ideas..." opening a sentence does not."""
+    own = re.sub(r"[\"“][^\"”]*[\"”]", " ", text)
+    pat = r"(?:(?<=[a-z,;:(] )(?:Emerging|Developing|Proficient|Extending)\b\+?|\b(?:Emerging|Developing|Proficient|Extending)\+)"
+    return sorted(set(re.findall(pat, own)))
+
 DETAILED_HEADINGS = ["Strengths", "Next steps", "One thing to try"]
 
 
@@ -232,7 +236,7 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
     best, best_hits = None, None
     keep_format = {"sentence": "as exactly one sentence",
                    "paragraph": "as one short paragraph, with no headings or bullets"}
-    for attempt in range(3):  # regenerate (max twice) if the model uses another level's value-statement words
+    for attempt in range(3):  # regenerate (max twice) if the model names a level or uses another level's wording
         if attempt:  # ask only for what was wrong, and restate the chosen length so a retry can't change format
             asks = (["without the quoted words"] if any(not w.startswith("(") for w in hits) else []) + (
                 ["with all three bold headings (Strengths, Next steps, One thing to try)"] if any(w.startswith("(") for w in hits)
@@ -256,7 +260,7 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         text = sanitize_feedback(out["message"]["content"])
         if length == "detailed":
             text = fix_headings(text)
-        hits = wrong_level_words(text, bad)
+        hits = wrong_level_words(text, bad) + named_levels(text)  # the teacher's level is added below, never by the model
         score = len(hits) + (len(missing_headings(text)) if length == "detailed" else 0)
         if best is None or score < best_hits:
             best, best_hits = text, score

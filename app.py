@@ -682,7 +682,7 @@ function addStudent(name="", work=""){
         <select class="sgrade"><option value="">Same as class</option>
         ${GRADES.map(g=>`<option>${g}</option>`).join("")}</select>
         <label style="margin-top:8px">Level <span style="font-weight:400;color:var(--mute)">(optional, you decide)</span></label>
-        <select class="level"><option value="">Let the AI describe the work</option>
+        <select class="level"><option value="">No level (feedback only)</option>
         ${["Emerging","Emerging+","Developing","Developing+","Proficient","Proficient+","Extending","Extending+"].map(l=>`<option>${l}</option>`).join("")}
         </select></div></div>
     <label style="margin-top:12px">Work</label><textarea class="work"></textarea>
