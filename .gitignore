@@ -1,0 +1,11 @@
+# Never commit secrets, student work, generated feedback, class lists or caches.
+.env*
+courses.cache.json
+feedback/
+submissions/
+*.csv
+*.xlsx
+*.docx
+__pycache__/
+.vercel
+.DS_Store

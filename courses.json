@@ -1,0 +1,166 @@
+{
+  "_note": "Source: Course Hub public.course_catalog (canonical). department must match a standards PDF: ADST, Bible, Career, Fine Arts, Worship Leadership (CLE = Career). match = only show standards whose label contains this text. quarters on a course = which quarters it runs in 2026-27 (omit = all year), from Course Hub sections. The app reads courses live from Course Hub; this list is only the last-resort fallback. department_rules classify live course names into departments (first match wins).",
+  "courses": [
+    {
+      "code": "ICT9",
+      "name": "ICT 9 (Q1)",
+      "department": "ADST",
+      "grades": [
+        9
+      ],
+      "quarters": [
+        1
+      ]
+    },
+    {
+      "code": "ICT9",
+      "name": "ICT 9 (Q2)",
+      "department": "ADST",
+      "grades": [
+        9
+      ],
+      "quarters": [
+        2
+      ]
+    },
+    {
+      "code": "CS10",
+      "name": "Computer Studies 10",
+      "department": "ADST",
+      "grades": [
+        10
+      ]
+    },
+    {
+      "code": "CP11",
+      "name": "Computer Programming 11",
+      "department": "ADST",
+      "grades": [
+        11
+      ]
+    },
+    {
+      "code": "CP12",
+      "name": "Computer Programming 12",
+      "department": "ADST",
+      "grades": [
+        12
+      ]
+    },
+    {
+      "code": "BP10",
+      "name": "Biblical Perspectives 10",
+      "department": "Bible",
+      "grades": [
+        10
+      ]
+    },
+    {
+      "code": "CLE10",
+      "name": "Career Life Education 10",
+      "department": "Career",
+      "grades": [
+        10
+      ],
+      "match": "Career 10"
+    },
+    {
+      "code": "BAND9",
+      "name": "Band 9",
+      "department": "Fine Arts",
+      "grades": [
+        9
+      ],
+      "quarters": [
+        3,
+        4
+      ]
+    },
+    {
+      "code": "BAND10",
+      "name": "Band 10",
+      "department": "Fine Arts",
+      "grades": [
+        10
+      ]
+    },
+    {
+      "code": "BAND11",
+      "name": "Band 11",
+      "department": "Fine Arts",
+      "grades": [
+        11
+      ]
+    },
+    {
+      "code": "BAND12",
+      "name": "Band 12",
+      "department": "Fine Arts",
+      "grades": [
+        12
+      ]
+    },
+    {
+      "code": "WL11",
+      "name": "Worship Leadership 11",
+      "department": "Worship Leadership",
+      "grades": [
+        11
+      ]
+    },
+    {
+      "code": "WL12",
+      "name": "Worship Leadership 12",
+      "department": "Worship Leadership",
+      "grades": [
+        12
+      ]
+    }
+  ],
+  "school_year": "2026-27",
+  "quarters": [
+    {
+      "label": "Q1",
+      "start": "2026-09-08",
+      "end": "2026-11-13"
+    },
+    {
+      "label": "Q2",
+      "start": "2026-11-16",
+      "end": "2027-01-28"
+    },
+    {
+      "label": "Q3",
+      "start": "2027-02-01",
+      "end": "2027-04-17"
+    },
+    {
+      "label": "Q4",
+      "start": "2027-04-19",
+      "end": "2027-06-24"
+    }
+  ],
+  "department_rules": [
+    {
+      "pattern": "\\bband\\b|music|choir|drama|\\bart\\b|media arts",
+      "department": "Fine Arts"
+    },
+    {
+      "pattern": "biblical|^bp\\b|\\bbible\\b",
+      "department": "Bible"
+    },
+    {
+      "pattern": "career|\\bcle\\b|\\bclc\\b",
+      "department": "Career",
+      "match_by_grade": "Career"
+    },
+    {
+      "pattern": "worship|^wl\\b",
+      "department": "Worship Leadership"
+    },
+    {
+      "pattern": "\\bict\\b|^cp\\b|^cs\\d|computer|programming|drafting|textiles|robotics|woodwork",
+      "department": "ADST"
+    }
+  ]
+}

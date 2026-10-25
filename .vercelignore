@@ -1,0 +1,11 @@
+# Never upload student data, class lists, secrets or caches if this folder is ever deployed.
+.env*
+courses.cache.json
+feedback/
+submissions/
+standards/
+*.csv
+*.xlsx
+*.docx
+*.pdf
+__pycache__/
