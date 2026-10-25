@@ -8,6 +8,40 @@ cd ~/Repos-folder/student-feedback && python3 app.py     # web page at http://12
 python3 feedback.py submissions/ --rubric rubric.txt --grade 10   # command line
 ```
 
+## Writing assignment instructions
+
+List what you're looking for after a label, and each item becomes a checklist the
+feedback must cover (as a strength if the work meets it, as a next step if not):
+
+```
+Assignment: one persuasive paragraph.
+Looking for: clear claim, at least two supporting reasons, evidence, concluding sentence.
+```
+
+or as bullets under the label:
+
+```
+Success criteria:
+- vivid imagery
+- a clear rhyme scheme
+```
+
+- Labels recognised: `Looking for:`, `Success criteria:`, `Criteria:`, `Must include:`, `Requirements:`.
+- Keep each item short (8 words or fewer) and separate items with commas, semicolons or bullets.
+- Only your own instructions are used, not the ticked learning standards.
+- Not used for one-sentence feedback (too short to cover a list).
+- Without a label the feedback still works, just without the checklist.
+- The check only confirms each item is mentioned, not that the judgement is right.
+
+Use command terms (describe, explain, justify, analyse, compare and contrast, discuss,
+evaluate, list, identify) in the instructions if you want feedback on that kind of
+thinking. The feedback only says "the task asks you to explain…" when the task does.
+
+Drafts that name a proficiency level you didn't set, invent a command term, write
+sentences for the student to copy, or skip a checklist item are regenerated (up to
+twice). Only you set levels: choose one on the student's card, or leave "No level".
+Always review drafts before sharing.
+
 ## Courses and terms come from Course Hub
 
 On load the page asks Course Hub (`/api/courses`, `/api/quarters`) for the current
