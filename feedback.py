@@ -63,11 +63,12 @@ LENGTHS = {
 next step, joined naturally (e.g. "You ..., and next ..."). No headings, bullets, labels or line breaks.""",
     "paragraph": """Format: ONE short paragraph of 3 to 5 sentences in plain prose: what worked (tied to something they
 wrote), then the most important next step, then one small thing to try. No headings, bullets, labels or line breaks.""",
-    "detailed": """Format (use these three bold headings, in this order):
+    "detailed": """Format (use these three bold headings, in this order, and start with the first heading):
 **Strengths** - 2 or 3 things done well, each tied to something the student actually wrote.
-**Next steps** - 2 or 3 concrete, actionable suggestions, most important first. If the task uses a command term and
-the work does a lower-level job, say so by name (e.g. "the task asks you to explain, but this describes").
-**One thing to try** - a single small task the student can do next.""",
+**Next steps** - 2 or 3 concrete, actionable suggestions, most important first. Only if the request lists a command
+term for this task and the work does a lower-level job, say so, naming that term.
+**One thing to try** - a single small task the student can do next.
+Under each heading write a short paragraph of plain prose: no bullet points or numbered lists.""",
 }
 DEFAULT_LENGTH = "paragraph"
 
@@ -148,15 +149,68 @@ def named_levels(text):
     pat = r"(?:(?<=[a-z,;:(] )(?:Emerging|Developing|Proficient|Extending)\b\+?|\b(?:Emerging|Developing|Proficient|Extending)\+)"
     return sorted(set(re.findall(pat, own)))
 
+COMMAND_TERMS = {  # term -> pattern for the term and its noun ("explain", "explanation")
+    "describe": r"describ\w*|description", "explain": r"explain\w*|explanation", "justify": r"justif\w*",
+    "analyse": r"analy[sz]\w*", "compare and contrast": r"compar\w*|contrast\w*", "discuss": r"discuss\w*",
+    "evaluate": r"evaluat\w*", "list": r"list", "identify": r"identif\w*",
+}
+
+
+def command_terms(task):
+    """Command terms the assignment or rubric actually uses."""
+    return [t for t, p in COMMAND_TERMS.items() if re.search(r"\b(?:" + p + r")\b", task, flags=re.I)]
+
+
+def invented_terms(text, terms):
+    """Command terms the model says the task asks for ("the task asks you to explain") that the task never uses."""
+    own = re.sub(r"[\"“][^\"”]*[\"”]", " ", text)
+    asked = re.findall(r"\b(?:asks?|asked|requires?|required|wants?|expects?|calls? for)\s+(?:(?:you|students?|the\s+student)\s+to|for\s+an?|an?)?\s*(\w+)",
+                       own, flags=re.I)
+    found = [next((t for t, p in COMMAND_TERMS.items() if re.fullmatch(p, w, flags=re.I)), None) for w in asked]
+    return sorted({t for t in found if t and t not in terms})
+
+
 DETAILED_HEADINGS = ["Strengths", "Next steps", "One thing to try"]
+BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+
+
+def unbullet(text):
+    """Detailed format asks for prose: join each run of bullet or numbered lines into one paragraph."""
+    end = lambda s: s.rstrip() + ("" if re.search(r"[.!?:;\"”)]$", s.rstrip()) else ".")  # items become sentences
+    lines, in_list, gap = [], False, False
+    for line in text.split("\n"):
+        if BULLET.match(line):
+            item = BULLET.sub("", line).strip()
+            if in_list:
+                lines[-1] = end(lines[-1]) + " " + item
+            else:
+                lines.append(item)
+            in_list, gap = True, False
+        elif in_list and not line.strip():
+            gap = True  # a blank line between bullets: keep the list together
+        else:
+            if in_list:
+                lines[-1] = end(lines[-1])
+            if gap:
+                lines.append("")
+            lines.append(line)
+            in_list = gap = False
+    if in_list:
+        lines[-1] = end(lines[-1])
+    return "\n".join(lines)
 
 
 def fix_headings(text):
-    """Detailed format: normalise '**Heading**:' to '**Heading**', and re-insert a dropped first heading."""
+    """Detailed format: normalise '**Heading**:' to '**Heading**', re-insert a dropped first heading, drop any
+    remark before the first heading, and turn bullet lists into prose."""
     for h in DETAILED_HEADINGS:
         text = re.sub(r"^[# \t]*\*{0,2}" + re.escape(h) + r"\*{0,2}\s*:?\*{0,2}[ \t]*$", f"**{h}**", text, flags=re.I | re.M)
     if "**Strengths**" not in text and "**Next steps**" in text and not text.lstrip().startswith("**"):
         text = "**Strengths**\n" + text.lstrip()  # the model dropped only the opening heading
+    i = text.find("**Strengths**")
+    if i > 0:
+        text = text[i:]  # an opening remark before the first heading ("Your paragraph ... a strong start.")
+    text = unbullet(text)
     m = re.search(r"\*\*One thing to try\*\*[ \t]*\n+[^\n]+(?:\n(?!\n)[^\n]+)*", text)
     if m:
         text = text[:m.end()]  # drop any closing remark after the last section's paragraph
@@ -214,12 +268,16 @@ def display_name(label):
 
 
 def generate(model, rubric, grade_level, label, work, notes="", level="", term="", length=DEFAULT_LENGTH, title=""):
+    terms = command_terms(title + "\n" + rubric)
     user = (
         f"Grade level: {grade_level}\n"
         + (f"Term: {term}\n" if term else "")
         + (f"Assignment: {title.strip()}\n" if title.strip() else "")
         + "\n"
         f"Rubric / what the teacher is looking for:\n{rubric}\n\n"
+        + (f"Command terms this task uses: {', '.join(terms)}.\n\n" if terms else
+           "This task uses no command term (describe, explain, justify, analyse, compare, discuss, evaluate, list, identify), "
+           "so never say the task asks for one.\n\n")
         + (f"Teacher's private notes about this student (do not quote or reveal):\n{notes.strip()}\n\n" if notes.strip() else "")
         + (f"Teacher's assessment: this work is at the {level.strip()} level. Write feedback consistent with that. "
            "A sentence naming the level and the school's wording for it is added automatically before your text, so do not "
@@ -236,13 +294,16 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
     best, best_hits = None, None
     keep_format = {"sentence": "as exactly one sentence",
                    "paragraph": "as one short paragraph, with no headings or bullets"}
-    for attempt in range(3):  # regenerate (max twice) if the model names a level or uses another level's wording
-        if attempt:  # ask only for what was wrong, and restate the chosen length so a retry can't change format
-            asks = (["without the quoted words"] if any(not w.startswith("(") for w in hits) else []) + (
-                ["with all three bold headings (Strengths, Next steps, One thing to try)"] if any(w.startswith("(") for w in hits)
+    for attempt in range(3):  # regenerate (max twice) if a draft breaks a rule the code can check
+        if attempt:  # name each problem, ask only for that fix, and restate the chosen length so a retry can't change format
+            problems = ([", ".join(f'"{w}"' for w in words)] if words else []) + (
+                [f"it says the task asks for {' / '.join(invented)}, but the task never asks for that"] if invented else []) + (
+                ["missing heading: " + ", ".join(missing)] if missing else [])
+            asks = (["without the quoted words"] if words else []) + (
+                ["without saying the task asks for a kind of thinking it doesn't name"] if invented else []) + (
+                ["with all three bold headings (Strengths, Next steps, One thing to try)"] if missing
                 else [keep_format[length]] if length in keep_format else [])
-            msg = (user + "\n\nYour previous draft had problems: " + ", ".join(w if w.startswith("(") else f'"{w}"' for w in hits)
-                   + ". Rewrite it " + " and ".join(asks) + ".")
+            msg = user + "\n\nYour previous draft had problems: " + "; ".join(problems) + ". Rewrite it " + " and ".join(asks) + "."
         else:
             msg = user
         out = http_json(
@@ -260,14 +321,14 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         text = sanitize_feedback(out["message"]["content"])
         if length == "detailed":
             text = fix_headings(text)
-        hits = wrong_level_words(text, bad) + named_levels(text)  # the teacher's level is added below, never by the model
-        score = len(hits) + (len(missing_headings(text)) if length == "detailed" else 0)
+        words = wrong_level_words(text, bad) + named_levels(text)  # the teacher's level is added below, never by the model
+        invented = invented_terms(text, terms)
+        missing = missing_headings(text) if length == "detailed" else []
+        score = len(words) + len(invented) + len(missing)
         if best is None or score < best_hits:
             best, best_hits = text, score
         if not score:
             break
-        if length == "detailed" and missing_headings(text):
-            hits = hits + ["(missing heading: " + ", ".join(missing_headings(text)) + ")"]
     text = best
     if length in ("sentence", "paragraph"):
         text = re.sub(r"\*\*(?:" + "|".join(map(re.escape, DETAILED_HEADINGS)) + r"):?\*\*:?\s*", "", text, flags=re.I)  # stray labels like **Strengths**
