@@ -52,6 +52,11 @@ Rules:
   referring to both; Discuss = balanced range of arguments with an evidence-supported conclusion; Evaluate = weigh
   strengths and limitations. If the response only does a lower-level job (e.g. describes when asked to explain), say
   so kindly and show what adding the missing thinking would look like. Do not invent a command term the task lacks.
+- Never write the student's work for them: no ready-made sentences, rewritten versions or example wording they could
+  copy. Say what to add or change and why, and leave the writing to them. Use quotation marks only to quote the
+  student's work or the task exactly.
+- If the teacher lists criteria to cover, mention every one: as a strength if the work meets it, or as a next step if
+  it doesn't.
 - Do not use the student's name. Address them as "you". If a name is essential, write [NAME].
 - No percentages, letter grades or scores.
 - If the work is very short, off-task, or missing something the assignment required, say so kindly and plainly.
@@ -172,6 +177,50 @@ def invented_terms(text, terms):
 
 DETAILED_HEADINGS = ["Strengths", "Next steps", "One thing to try"]
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+CRITERIA_LINE = re.compile(r"^\s*(?:looking for|success criteria|criteria|must include|requirements?)\s*:[ \t]*(.*)$", re.I | re.M)
+GENERIC = {"the", "and", "for", "with", "your", "you", "least", "two", "three", "four", "one", "each", "some", "more",
+           "clear", "clearly", "good", "strong", "well", "supporting", "sentence", "sentences", "paragraph", "use", "uses",
+           "using", "include", "includes", "including"}
+
+
+def rubric_criteria(rubric):
+    """The teacher's checklist ("Looking for: a, b, c" or bullets under "Looking for:"); [] if there is none.
+    Only the teacher's own text: app.py appends the standards after "Learning standards (RCS"."""
+    teacher = rubric.split("Learning standards (RCS")[0]
+    items = []
+    for m in CRITERIA_LINE.finditer(teacher):
+        if m.group(1).strip():
+            items += re.split(r"\s*[;,]\s*", m.group(1).strip().rstrip("."))
+        else:
+            for line in teacher[m.end():].lstrip("\n").splitlines():
+                if not BULLET.match(line):
+                    break
+                items.append(BULLET.sub("", line))
+    items = [i.strip(" .") for i in items]
+    return list(dict.fromkeys(i for i in items if 0 < len(i.split()) <= 8))
+
+
+def uncovered(text, criteria):
+    """Criteria the feedback never mentions, judged by their key words ("concluding sentence" -> "conclu...")."""
+    low = text.lower()
+    out = []
+    for c in criteria:
+        keys = [w[:5] for w in re.findall(r"[a-z]+", c.lower()) if len(w) > 2 and w not in GENERIC]
+        if keys and not any(re.search(r"\b" + k, low) for k in keys):
+            out.append(c)
+    return out
+
+
+def unsourced_quotes(text, *sources):
+    """Quoted passages of 4+ words found in neither the student's work nor the task: wording written for the student
+    to copy (or a misquote). A quote shortened with "..." is checked piece by piece."""
+    flat = lambda s: " ".join(re.findall(r"[a-z0-9']+", s.lower().replace("’", "'")))
+    src = flat(" ".join(sources))
+    out = []
+    for q in re.findall(r"[\"“]([^\"”]+)[\"”]", text):
+        if len(q.split()) >= 4 and any(flat(p) not in src for p in re.split(r"\.{3}|…", q) if flat(p)):
+            out.append(q.strip())
+    return out
 
 
 def unbullet(text):
@@ -269,6 +318,7 @@ def display_name(label):
 
 def generate(model, rubric, grade_level, label, work, notes="", level="", term="", length=DEFAULT_LENGTH, title=""):
     terms = command_terms(title + "\n" + rubric)
+    criteria = rubric_criteria(rubric) if length != "sentence" else []  # one sentence can't cover a checklist
     user = (
         f"Grade level: {grade_level}\n"
         + (f"Term: {term}\n" if term else "")
@@ -278,6 +328,8 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         + (f"Command terms this task uses: {', '.join(terms)}.\n\n" if terms else
            "This task uses no command term (describe, explain, justify, analyse, compare, discuss, evaluate, list, identify), "
            "so never say the task asks for one.\n\n")
+        + ("Criteria to cover (mention every one: as a strength if the work meets it, as a next step if it doesn't):\n"
+           + "\n".join(f"- {c}" for c in criteria) + "\n\n" if criteria else "")
         + (f"Teacher's private notes about this student (do not quote or reveal):\n{notes.strip()}\n\n" if notes.strip() else "")
         + (f"Teacher's assessment: this work is at the {level.strip()} level. Write feedback consistent with that. "
            "A sentence naming the level and the school's wording for it is added automatically before your text, so do not "
@@ -298,9 +350,13 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         if attempt:  # name each problem, ask only for that fix, and restate the chosen length so a retry can't change format
             problems = ([", ".join(f'"{w}"' for w in words)] if words else []) + (
                 [f"it says the task asks for {' / '.join(invented)}, but the task never asks for that"] if invented else []) + (
+                ["it writes wording for the student to copy: " + "; ".join(f'"{q}"' for q in ghost)] if ghost else []) + (
+                ["it never mentions: " + ", ".join(gaps)] if gaps else []) + (
                 ["missing heading: " + ", ".join(missing)] if missing else [])
             asks = (["without the quoted words"] if words else []) + (
                 ["without saying the task asks for a kind of thinking it doesn't name"] if invented else []) + (
+                ["saying what to add instead of writing it for them"] if ghost else []) + (
+                ["covering every listed criterion"] if gaps else []) + (
                 ["with all three bold headings (Strengths, Next steps, One thing to try)"] if missing
                 else [keep_format[length]] if length in keep_format else [])
             msg = user + "\n\nYour previous draft had problems: " + "; ".join(problems) + ". Rewrite it " + " and ".join(asks) + "."
@@ -323,8 +379,10 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
             text = fix_headings(text)
         words = wrong_level_words(text, bad) + named_levels(text)  # the teacher's level is added below, never by the model
         invented = invented_terms(text, terms)
+        ghost = unsourced_quotes(text, work, rubric, title)
+        gaps = uncovered(text, criteria)
         missing = missing_headings(text) if length == "detailed" else []
-        score = len(words) + len(invented) + len(missing)
+        score = len(words) + len(invented) + len(ghost) + len(gaps) + len(missing)
         if best is None or score < best_hits:
             best, best_hits = text, score
         if not score:
