@@ -183,6 +183,37 @@ def parse_upload(filename, raw, mode):
     return _split_text(text, stem) if mode != "whole" else [(stem, text.strip())]
 
 
+ASSESSMENT = Path.home() / "Desktop" / "Teaching" / "Assessment"   # Assessment/<year>/<quarter>/<course>/<assignment>/FirstName_LastName.txt
+SECTION_SUFFIX = re.compile(r"_(?:homework|handouts)$", re.I)
+
+
+def list_assessments():
+    """Every folder under Assessment that holds .txt/.md work, newest first: [{path (relative to Assessment), label}]."""
+    found = []
+    if ASSESSMENT.is_dir():
+        for d in [ASSESSMENT, *ASSESSMENT.rglob("*")]:
+            if d.is_dir() and not d.name.startswith(".") and any(f.suffix.lower() in {".txt", ".md"} for f in d.iterdir()):
+                rel = d.relative_to(ASSESSMENT)
+                found.append((d.stat().st_mtime, {"path": rel.as_posix(), "label": " \u203a ".join(rel.parts) or "Assessment"}))
+    return [x for _, x in sorted(found, key=lambda t: -t[0])]
+
+
+def load_assessment(rel):
+    """One folder under Assessment -> [(name, work)], one per .txt/.md file; name = filename with _ as spaces."""
+    root = ASSESSMENT.resolve()
+    d = (root / rel).resolve()
+    if not (d.is_dir() and (d == root or d.is_relative_to(root))):
+        raise ValueError("not inside the Assessment folder")
+    out = []
+    for f in sorted(d.iterdir()):
+        if f.name.startswith(".") or f.suffix.lower() not in {".txt", ".md"}:
+            continue
+        work = f.read_text(encoding="utf-8-sig", errors="replace").strip()
+        if work:
+            out.append((SECTION_SUFFIX.sub("", f.stem).replace("_", " "), work))
+    return out
+
+
 HERE = Path(__file__).parent
 CACHE = HERE / "courses.cache.json"
 
@@ -421,6 +452,9 @@ PAGE = r"""<!doctype html>
     <option value="auto">Split: automatic (Name: lines or --- rules)</option>
     <option value="page">Split: one student per PDF page</option>
     <option value="whole">Don't split: one student per file</option>
+  </select>
+  <select id="assess" style="width:auto" title="Student files saved under Desktop/Teaching/Assessment">
+    <option value="">Load from Assessment folder…</option>
   </select>
   <button class="primary" id="go">Generate feedback</button>
   <button id="dl" disabled>Download all (.csv)</button>
@@ -733,6 +767,28 @@ $("#filepick").onchange = async e => {
   applyTeams();
   e.target.value = "";
 };
+function loadAssessList(){
+  fetch("/api/assessments").then(r=>r.json()).then(d=>{
+    $("#assess").innerHTML = '<option value="">' + (d.folders.length ? "Load from Assessment folder…" : "No Assessment folders found") + '</option>' +
+      d.folders.map(f=>`<option value="${f.path.replace(/"/g,"&quot;")}">${f.label}</option>`).join("");
+  });
+}
+loadAssessList();
+$("#assess").onfocus = loadAssessList;
+$("#assess").onchange = async e => {
+  const path = e.target.value; if(!path) return;
+  $("#status").textContent = "Reading " + path + " …";
+  const d = await (await fetch("/api/load", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({path})})).json();
+  e.target.value = "";
+  if(d.error){ $("#status").innerHTML = '<span class="err"></span>'; $("#status").firstChild.textContent = d.error; return; }
+  const first = document.querySelector(".student");
+  if(first && !first.querySelector(".work").value.trim() && !first.querySelector(".name").value.trim()) first.remove();
+  d.students.forEach(s => addStudent(s.name, s.work));
+  if(!document.querySelector(".student")) addStudent();
+  if(d.students.length && ROSTER.length) matchAll(true);
+  $("#status").textContent = d.students.length + " student" + (d.students.length===1?"":"s") + " loaded from " + path + ". Choose a course to match them to the class list, then check the work and click Generate.";
+  applyTeams();
+};
 function csvCell(t){ return '"' + String(t).replace(/"/g,'""') + '"'; }
 $("#dlteams").onclick = () => {
   const done = [...document.querySelectorAll(".student")].map(c => ({c, o: c.querySelector(".out"), t: teamsFor(c)}))
@@ -835,6 +891,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"students": students})
             except RuntimeError as e:
                 self._send(200, {"error": str(e)})
+        elif self.path == "/api/assessments":
+            self._send(200, {"folders": list_assessments()})
         elif self.path == "/api/standards":
             docs = load_standards()
             self._send(200, {d: [{"id": x["id"], "label": x["label"]} for x in v] for d, v in docs.items()})
@@ -865,6 +923,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"students": [{"name": a, "work": b} for a, b in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{p.get('filename', 'file')}: {type(e).__name__}: {e}"})
+        if self.path == "/api/load":
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                rows = load_assessment(json.loads(self.rfile.read(n))["path"])
+                if not rows:
+                    return self._send(200, {"error": "No student work found in that folder."})
+                return self._send(200, {"students": [{"name": a, "work": b} for a, b in rows]})
+            except Exception as e:
+                return self._send(200, {"error": f"{type(e).__name__}: {e}"})
         if self.path != "/api/generate":
             return self._send(404, {"error": "not found"})
         try:
