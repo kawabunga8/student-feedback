@@ -192,8 +192,10 @@ def list_assessments():
     found = []
     if ASSESSMENT.is_dir():
         for d in [ASSESSMENT, *ASSESSMENT.rglob("*")]:
-            if d.is_dir() and not d.name.startswith(".") and any(f.suffix.lower() in {".txt", ".md"} for f in d.iterdir()):
-                rel = d.relative_to(ASSESSMENT)
+            rel = d.relative_to(ASSESSMENT)
+            if not d.is_dir() or any(p.startswith(".") for p in rel.parts):  # skip hidden folders and their contents
+                continue
+            if any(f.suffix.lower() in {".txt", ".md"} and not f.name.startswith(".") for f in d.iterdir()):
                 found.append((d.stat().st_mtime, {"path": rel.as_posix(), "label": " \u203a ".join(rel.parts) or "Assessment"}))
     return [x for _, x in sorted(found, key=lambda t: -t[0])]
 
@@ -767,26 +769,36 @@ $("#filepick").onchange = async e => {
   applyTeams();
   e.target.value = "";
 };
+function showErr(msg){ $("#status").textContent = ""; const s = document.createElement("span"); s.className = "err"; s.textContent = msg; $("#status").append(s); }
 function loadAssessList(){
   fetch("/api/assessments").then(r=>r.json()).then(d=>{
-    $("#assess").innerHTML = '<option value="">' + (d.folders.length ? "Load from Assessment folder…" : "No Assessment folders found") + '</option>' +
-      d.folders.map(f=>`<option value="${f.path.replace(/"/g,"&quot;")}">${f.label}</option>`).join("");
-  });
+    if($("#assess") === document.activeElement) return;   // don't swap options under an open menu
+    const sel = $("#assess"), folders = d.folders || [];
+    sel.replaceChildren(new Option(d.error ? "Assessment folder unreadable" : folders.length ? "Load from Assessment folder…" : "No Assessment folders found", ""));
+    folders.forEach(f => sel.add(new Option(f.label, f.path)));   // text, not HTML: folder names can contain < or &
+    sel.title = d.error || "Student files saved under Desktop/Teaching/Assessment";
+  }).catch(() => {});
 }
 loadAssessList();
-$("#assess").onfocus = loadAssessList;
+window.addEventListener("focus", loadAssessList);   // pick up folders saved while you were in another app
 $("#assess").onchange = async e => {
   const path = e.target.value; if(!path) return;
-  $("#status").textContent = "Reading " + path + " …";
-  const d = await (await fetch("/api/load", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({path})})).json();
   e.target.value = "";
-  if(d.error){ $("#status").innerHTML = '<span class="err"></span>'; $("#status").firstChild.textContent = d.error; return; }
+  $("#status").textContent = "Reading " + path + " …";
+  let d;
+  try { d = await (await fetch("/api/load", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({path})})).json(); }
+  catch(err){ return showErr("Couldn't reach the app to read " + path + "."); }
+  if(d.error) return showErr(d.error);
+  const have = new Set([...document.querySelectorAll(".student")].map(c => c.querySelector(".name").value.trim() + "\n" + c.querySelector(".work").value.trim()));
+  const fresh = d.students.filter(s => !have.has(s.name + "\n" + s.work));   // loading the same folder twice adds nothing
   const first = document.querySelector(".student");
-  if(first && !first.querySelector(".work").value.trim() && !first.querySelector(".name").value.trim()) first.remove();
-  d.students.forEach(s => addStudent(s.name, s.work));
-  if(!document.querySelector(".student")) addStudent();
-  if(d.students.length && ROSTER.length) matchAll(true);
-  $("#status").textContent = d.students.length + " student" + (d.students.length===1?"":"s") + " loaded from " + path + ". Choose a course to match them to the class list, then check the work and click Generate.";
+  if(fresh.length && first && !first.querySelector(".work").value.trim() && !first.querySelector(".name").value.trim()) first.remove();
+  fresh.forEach(s => addStudent(s.name, s.work));
+  const dup = d.students.length - fresh.length, again = dup ? " (" + dup + " already on the page, skipped)" : "";
+  if(fresh.length && ROSTER.length) matchAll(true);   // its class-list summary is the more useful status
+  else $("#status").textContent = fresh.length + " student" + (fresh.length===1?"":"s") + " loaded from " + path + again + "." +
+    (fresh.length ? " Choose a course to match them to the class list, then check the work and click Generate." : "");
+  if(fresh.length && ROSTER.length && dup) $("#status").textContent += again;
   applyTeams();
 };
 function csvCell(t){ return '"' + String(t).replace(/"/g,'""') + '"'; }
@@ -892,7 +904,11 @@ class Handler(BaseHTTPRequestHandler):
             except RuntimeError as e:
                 self._send(200, {"error": str(e)})
         elif self.path == "/api/assessments":
-            self._send(200, {"folders": list_assessments()})
+            try:
+                self._send(200, {"folders": list_assessments()})
+            except OSError as e:  # e.g. macOS hasn't allowed this app to read the Desktop
+                self._send(200, {"folders": [], "error": f"Can't read {ASSESSMENT}: {e.strerror or e}. If macOS blocked it, allow "
+                                                       "Terminal (or the launcher) under System Settings > Privacy & Security > Files and Folders."})
         elif self.path == "/api/standards":
             docs = load_standards()
             self._send(200, {d: [{"id": x["id"], "label": x["label"]} for x in v] for d, v in docs.items()})
