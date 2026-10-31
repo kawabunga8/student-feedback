@@ -235,7 +235,7 @@ named "Stage 2 – Define & Ideate", but the test student's page was titled
 | Stage | System | Notes |
 |---|---|---|
 | Submission | OneNote ClassNotebook (primary), Teams attachments, Canva/SharePoint links | Mapped, vision read — see above |
-| Draft feedback | `student-feedback` app (local, Ollama, localhost only) | Runs automatically within Phase A |
+| Draft feedback | `student-feedback` app (local: Ollama or LM Studio, localhost only) | Runs automatically within Phase A |
 | Human review | Shingo | Mandatory gate, between Phase A and B |
 | Post feedback | Teams Assignments | Mapped 2026-10-30 — see below |
 | Post grade | MySchool Grade Grid | Mapped 2026-10-30 — see below |
@@ -446,6 +446,12 @@ connected through the desktop app.
   instructions from Teams' Student view. Level left unset; nothing generated
   yet.
 - Drafted `skills/phase-b-upload/SKILL.md`.
+- Added LM Studio as a second local engine in the app and `feedback.py`
+  (Model menu grouped by engine; switching unloads the other engine's
+  model). First LM Studio timing: 10.11 tokens/s, 84.30 s to the first
+  token, for one paragraph.
+- 2026-10-31: removed LM Studio and its MLX model; Ollama stays the engine.
+  The app's LM Studio support remains for later tests.
 - Nothing has been posted to Teams or MySchool yet.
 
 ## Related

@@ -52,9 +52,10 @@ flowchart LR
 | Component | Runs where | Role | Holds student data? |
 |---|---|---|---|
 | `student-feedback` app (`app.py`) | Mac, `127.0.0.1:8765` | Web page for loading work, setting levels, drafting and exporting feedback | Yes, on the Mac only |
-| `feedback.py` | Mac | Prompt, Ollama call, and batch CLI (`<name>.feedback.md` per student) | Yes, on the Mac only |
+| `feedback.py` | Mac | Prompt, model call (Ollama or LM Studio), and batch CLI (`<name>.feedback.md` per student) | Yes, on the Mac only |
 | `stage_submissions.py` | Mac | Phase A staging: matches collected files to the live class list and writes the Assessment folder | Yes |
-| Ollama, `qwen2.5:14b` | Mac, `localhost:11434` | Local model behind every draft; nothing goes to a cloud model for drafting | Yes, on the Mac only |
+| Ollama, `qwen2.5:14b` | Mac, `localhost:11434` | Local model engine (the default); nothing goes to a cloud model for drafting | Yes, on the Mac only |
+| LM Studio (not installed) | Mac, `localhost:1234` (OpenAI-style API) | Optional second engine. The app still supports it; LM Studio and its MLX model were removed on 2026-10-31 after testing (see "Engine choice") | Only if reinstalled |
 | Course Hub | Mac, `localhost:3005` (with Colima and a shared database) | Courses, quarter dates, class lists | Class lists |
 | Assessment folder | `~/Desktop/Teaching/Assessment/<year>/<quarter>/<course>/<assignment>/` | Phase A output, Stage 3 review, Phase B input | Yes |
 | Claude session (Cowork) | Anthropic's cloud, linked to the Mac | Runs Phase A and Phase B: reads submissions, drives the browser, runs scripts | Reads work and feedback while working |
@@ -94,14 +95,31 @@ from using DNS rebinding to read class lists.
 | GET | `/api/roster?name=&quarter=` | Class list for a course (used by `stage_submissions.py`) |
 | GET | `/api/assessments` | Folders under the Assessment folder that hold work |
 | GET | `/api/standards` | Parsed learning-standards PDFs |
-| GET | `/api/models` | Models available in Ollama |
+| GET | `/api/models` | Models from both engines, grouped by engine, plus which engine isn't running |
 | POST | `/api/parse` | Split uploaded files into one entry per student |
 | POST | `/api/load` | Load one Assessment folder |
 | POST | `/api/generate` | Draft feedback for one student |
 
 The app calls Course Hub (`/api/quarters`, `/api/courses`,
 `/api/courses/<id>/roster`) with a key read server-side from `.env.local`,
-and Ollama (`/api/tags`, `/api/chat`).
+Ollama (`/api/tags`, `/api/chat`, and `/api/ps` with `/api/generate` to unload), and LM Studio
+(`/v1/models`, `/v1/chat/completions`). A model id with the prefix `lmstudio::` goes to LM Studio; a bare
+name goes to Ollama, so older saved choices still work.
+
+**The Mac.** MacBook Air 13-inch, M3 (2024), 16 GB, macOS 27. Writing speed for a 14B model is limited mainly by the M3's memory bandwidth (about 100 GB/s), so roughly 10 to 12 tokens a second is close to the ceiling whichever engine runs it. The Air has no fan, so a long batch slows as it warms; run batches plugged in, with other heavy apps closed.
+
+**Memory.** This Mac has 16 GB. Measured on 2026-10-30, the MLX build of the 14B model used 8.28 GB in
+LM Studio, so only one 14B model fits at a time, and the vision model (`qwen2.5vl:7b`, 6.0 GB) has to run on
+its own too. When the engine changes, the app
+unloads the other engine's model first (Ollama through its API; LM Studio with `lms unload --all` when the
+`lms` command is installed).
+
+**Engine choice (2026-10-31).** Ollama is the engine in use: `qwen2.5:14b` (9.0 GB) and `qwen2.5vl:7b`
+(6.0 GB), stored in `~/.ollama/models`. LM Studio with the MLX build was tested on 2026-10-30 and removed on
+2026-10-31; on this M3, writing speed is near the chip's ceiling whichever engine runs the model. Ollama's
+own MLX mode (from version 0.19) needs more than 32 GB of memory and only covers a few newer models, so it
+doesn't apply to this Mac. The app's LM Studio support stays, so another engine or model can be tried later
+without code changes.
 
 ## Files and conventions
 
@@ -149,7 +167,7 @@ and Ollama (`/api/tags`, `/api/chat`).
 |---|---|---|---|
 | Phase A: collect | Class Notebook pages, Teams attachments, SharePoint and Canva links | Claude reads them in the browser pane (screenshots for OneNote) | Collected text, one file per student |
 | Phase A: stage | Collected text | `stage_submissions.py` on the Mac, checked against `/api/roster` | Assessment folder |
-| Phase A: draft | Assessment folder | `feedback.py` batch, Ollama on the Mac | `<name>.feedback.md` drafts |
+| Phase A: draft | Assessment folder | `feedback.py` batch, Ollama or LM Studio on the Mac | `<name>.feedback.md` drafts |
 | Stage 3: review | Drafts | Shingo edits; sets levels | Approved folder |
 | Phase B: post | Approved folder | Claude in the browser pane, after Shingo's go-ahead for the batch | Teams (feedback, Return) and MySchool (level, comment) |
 
@@ -172,7 +190,7 @@ well within its reach.
 | Read Class Notebook pages | Claude reads screenshots | Script reads the page text straight from the OneNote frame | Handwriting or images only: `qwen2.5vl:7b` transcribes a screenshot |
 | Linked files (SharePoint, Word, PDF) | Popups blocked in the pane | Script downloads them through the signed-in browser; the app already parses .docx, .pdf and .xlsx | None |
 | Stage | `stage_submissions.py` | Same | None (name matching is deterministic) |
-| Draft | `feedback.py` with `qwen2.5:14b` | Same | Draft feedback; existing checks regenerate bad drafts |
+| Draft | `feedback.py` with `qwen2.5:14b` in Ollama | Same (LM Studio stays an option) | Draft feedback; existing checks regenerate bad drafts |
 | Review | Shingo | Shingo, in the app | None |
 | Post to Teams | Claude (planned) | `post_teams.py` (Playwright): type feedback, Return | None |
 | Post to MySchool | Claude (planned) | `post_myschool.py` (Playwright): level bubbles, comment, save | Optionally shorten the comment |
@@ -196,8 +214,11 @@ signs in to once.
   (expected, untested). The frame (`WebApplicationFrame`) is loaded by a
   form post and has no `src`, so it can't be opened on its own; Playwright
   reads it in place.
-- Memory: `qwen2.5:14b` (about 9 GB) and `qwen2.5vl:7b` together may be
-  tight, so run them one after the other.
+- Memory: with 16 GB, models run one at a time (see "Memory" above).
+- Speed: first LM Studio test (2026-10-30, one paragraph for one student):
+  10.11 tokens/s while writing, 103 tokens, 84.30 s before the first token.
+  At that rate a class of 28 takes most of an hour, so drafting suits an
+  unattended batch. Ollama's timing for the same student hasn't been measured yet.
 - Whether Python and Playwright are installed on the Mac. Not checked: the
   bridge shell is a Linux VM and can't see the Mac's own tools.
 

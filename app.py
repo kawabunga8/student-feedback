@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Local web UI for feedback.py. Run:  python3 app.py
-Opens http://127.0.0.1:8765 - served only on this laptop, talks only to local Ollama."""
+Opens http://127.0.0.1:8765 - served only on this laptop, talks only to a local model (Ollama or LM Studio)."""
 import base64
 import csv
 import html
@@ -413,7 +413,8 @@ PAGE = r"""<!doctype html>
   <textarea id="rubric" placeholder="Paste the assignment instructions here. (Optional if you tick learning standards below.)"></textarea>
   <div class="row">
     <div><label for="grade">Grade level</label><select id="grade"></select></div>
-    <div><label for="model">Model</label><select id="model"></select></div>
+    <div><label for="model">Model <span style="font-weight:400;color:var(--mute)">(Ollama or LM Studio)</span></label><select id="model"></select>
+      <div id="modelnote" class="status"></div></div>
   </div>
   <div class="row">
     <div><label for="length">Feedback length</label>
@@ -479,7 +480,19 @@ $("#grade").onchange = e => store.set("grade", e.target.value);
 fetch("/api/models").then(r=>r.json()).then(d=>{
   if(d.error){ $("#status").innerHTML = '<span class="err">'+d.error+'</span>'; return; }
   const saved = store.get("model_choice") || d.default;
-  $("#model").innerHTML = d.models.map(m=>`<option ${m===saved?"selected":""}>${m}</option>`).join("");
+  const groups = {};                                   // one group per engine: Ollama, LM Studio
+  d.models.forEach(m => (groups[m.engine] = groups[m.engine] || []).push(m));
+  $("#model").replaceChildren(...Object.entries(groups).map(([engine, ms]) => {
+    const g = document.createElement("optgroup"); g.label = engine;
+    g.append(...ms.map(m => new Option(m.name, m.id, false, m.id === saved))); return g;
+  }));
+  if(![...$("#model").options].some(o => o.value === saved)) $("#model").value = d.default;
+  // Stay quiet unless it matters: mention an engine that's off only if the saved choice needs it, and the
+  // memory note only when there really are two engines to switch between.
+  const savedEngine = (saved || "").startsWith("lmstudio::") ? "LM Studio" : "Ollama";
+  const savedOff = saved && d.offline.includes(savedEngine);
+  $("#modelnote").textContent = (savedOff ? savedEngine + " isn't running, so your last choice isn't available. " : "")
+    + (Object.keys(groups).length > 1 ? "Switching engines unloads the other one's model to free memory." : "");
 });
 $("#length").value = ["sentence","paragraph","detailed"].includes(store.get("length")) ? store.get("length") : "paragraph";
 $("#length").onchange = e => store.set("length", e.target.value);
@@ -913,11 +926,21 @@ class Handler(BaseHTTPRequestHandler):
             docs = load_standards()
             self._send(200, {d: [{"id": x["id"], "label": x["label"]} for x in v] for d, v in docs.items()})
         elif self.path == "/api/models":
-            try:
-                models = [m["name"] for m in fb.http_json("/api/tags", timeout=5)["models"]]
-                self._send(200, {"models": models, "default": fb.DEFAULT_MODEL if fb.DEFAULT_MODEL in models else models[0]})
-            except (urllib.error.URLError, OSError):
-                self._send(200, {"error": "Can't reach Ollama. Start it with `ollama serve` or open the Ollama app, then reload."})
+            models, offline = [], []
+            for b, info in fb.BACKENDS.items():
+                try:
+                    names = fb.list_models(b)
+                except Exception:  # not running, or answered with an error: leave it out and say so on the page
+                    offline.append(info["label"])
+                    continue
+                models += [{"id": fb.model_id(b, n), "name": n, "engine": info["label"]} for n in names]
+            if not models:
+                self._send(200, {"error": "Can't reach Ollama or LM Studio. Start Ollama (`ollama serve` or the Ollama app) "
+                                          "or LM Studio's server, then reload."})
+            else:
+                ids = [m["id"] for m in models]
+                self._send(200, {"models": models, "offline": offline,
+                                 "default": fb.DEFAULT_MODEL if fb.DEFAULT_MODEL in ids else ids[0]})
         else:
             self._send(404, {"error": "not found"})
 
@@ -950,6 +973,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
         if self.path != "/api/generate":
             return self._send(404, {"error": "not found"})
+        p = {}
         try:
             n = int(self.headers.get("Content-Length", 0))
             p = json.loads(self.rfile.read(n))
@@ -962,7 +986,10 @@ class Handler(BaseHTTPRequestHandler):
             text = fb.generate(p["model"], rubric, p.get("grade", ""), p.get("label", "student"), p["work"], p.get("notes", ""), p.get("level", ""), p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""))
             self._send(200, {"feedback": text})
         except (urllib.error.URLError, ConnectionError):
-            self._send(200, {"error": "Can't reach Ollama. Start it with `ollama serve` (or open the Ollama app), then click Generate again."})
+            engine, _ = fb.split_model(p.get("model", ""))
+            self._send(200, {"error": fb.unreachable(engine) + ", then click Generate again."})
+        except RuntimeError as e:  # the engine answered with its own error message (e.g. LM Studio couldn't load the model)
+            self._send(200, {"error": str(e)})
         except Exception as e:  # surface any failure to the page
             self._send(200, {"error": f"{type(e).__name__}: {e}"})
 

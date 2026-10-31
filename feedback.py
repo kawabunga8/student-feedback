@@ -1,26 +1,40 @@
 #!/usr/bin/env python3
-"""Generate draft feedback for student work using a local Ollama model.
+"""Generate draft feedback for student work using a local model, in Ollama or LM Studio.
 
-Everything runs on this laptop: student text is only ever sent to
-http://localhost:11434 (Ollama). No internet or cloud AI is involved.
+Everything runs on this laptop: student text is only ever sent to Ollama
+(http://localhost:11434) or LM Studio (http://localhost:1234). No internet or cloud AI is involved.
 
 Usage:
     python3 feedback.py submissions/ --rubric rubric.txt
     python3 feedback.py submissions/ --rubric rubric.txt --model llama3.1:8b --out feedback/
+    python3 feedback.py submissions/ --rubric rubric.txt --backend lmstudio
 
 Each submission is a .txt or .md file; the filename (without extension) is
 used as the student's label. Output: one <label>.feedback.md per student.
 """
 import argparse
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-OLLAMA = "http://localhost:11434"
-DEFAULT_MODEL = "qwen2.5:14b"  # falls back to the first installed model if missing
+# Local model engines. Student text is only ever sent to these addresses on this laptop.
+BACKENDS = {
+    "ollama": {"label": "Ollama", "url": os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/"),
+               "default": "qwen2.5:14b"},
+    "lmstudio": {"label": "LM Studio", "url": os.environ.get("LMSTUDIO_URL", "http://localhost:1234").rstrip("/"),
+                 "default": "qwen2.5-14b-instruct-mlx"},
+}
+DEFAULT_BACKEND = "ollama"
+OLLAMA = BACKENDS["ollama"]["url"]
+DEFAULT_MODEL = BACKENDS["ollama"]["default"]  # falls back to the first installed model if missing
+SEP = "::"  # LM Studio models are written "lmstudio::<name>"; a bare name is an Ollama model, so older saved choices still work
+NUM_CTX = 8192
 
 SYSTEM_TEMPLATE = """You are a supportive teaching assistant drafting feedback for a teacher to review.
 Write directly to the student ("you"), in a warm, specific, honest tone.
@@ -270,29 +284,117 @@ def missing_headings(text):
     return [h for h in DETAILED_HEADINGS if f"**{h}**" not in text]
 
 
-def http_json(path, payload=None, timeout=300):
+def split_model(model):
+    """'lmstudio::name' -> ('lmstudio', 'name'); a bare name -> ('ollama', name)."""
+    backend, sep, name = (model or "").partition(SEP)
+    if sep and backend in BACKENDS:
+        return backend, name
+    return DEFAULT_BACKEND, model or ""
+
+
+def model_id(backend, name):
+    return name if backend == DEFAULT_BACKEND else f"{backend}{SEP}{name}"
+
+
+def describe(model):
+    backend, name = split_model(model)
+    return f"{name} ({BACKENDS[backend]['label']})"
+
+
+def unreachable(backend):
+    return {"ollama": "Can't reach Ollama. Start it with `ollama serve` (or open the Ollama app)",
+            "lmstudio": "Can't reach LM Studio. Open LM Studio and start its server "
+                        "(Model Server in LM Studio, or `lms server start`)"}[backend]
+
+
+def http_json(path, payload=None, timeout=300, backend=DEFAULT_BACKEND):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
-        OLLAMA + path, data=data, headers={"Content-Type": "application/json"}
+        BACKENDS[backend]["url"] + path, data=data, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)
-
-
-def pick_model(requested):
     try:
-        models = [m["name"] for m in http_json("/api/tags", timeout=5)["models"]]
-    except (urllib.error.URLError, OSError):
-        sys.exit(
-            "Can't reach Ollama. Start it with `ollama serve` (or open the Ollama app) and try again."
-        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:  # the engine answered with an error: pass its own message on
+        try:
+            err = json.load(e).get("error")
+            msg = err.get("message") if isinstance(err, dict) else err
+        except Exception:
+            msg = None
+        raise RuntimeError(f"{BACKENDS[backend]['label']}: {msg or f'HTTP {e.code}'}") from None
+
+
+def list_models(backend):
+    """Models the engine can run. Raises URLError/OSError if it isn't running."""
+    if backend == "ollama":
+        return [m["name"] for m in http_json("/api/tags", timeout=5, backend=backend)["models"]]
+    return [m["id"] for m in http_json("/v1/models", timeout=5, backend=backend)["data"]
+            if "embed" not in m["id"].lower()]  # LM Studio also lists embedding models, which can't write feedback
+
+
+def default_model(backend, models):
+    want = BACKENDS[backend]["default"]
+    return want if want in models else models[0]
+
+
+_last_backend = None
+
+
+def free_other(backend):
+    """This Mac has room for one 14B model at a time, so when the engine changes, unload the other engine's
+    models first. Best effort: a failure here never stops the feedback."""
+    global _last_backend
+    if backend == _last_backend:
+        return
+    _last_backend = backend
+    if backend != "ollama":
+        try:
+            for m in http_json("/api/ps", timeout=3, backend="ollama").get("models", []):
+                http_json("/api/generate", {"model": m.get("name") or m.get("model"), "keep_alive": 0},
+                          timeout=30, backend="ollama")
+        except Exception:
+            pass
+    if backend != "lmstudio":
+        try:
+            http_json("/v1/models", timeout=3, backend="lmstudio")  # only if LM Studio is actually running
+            lms = shutil.which("lms") or str(Path.home() / ".lmstudio" / "bin" / "lms")
+            if Path(lms).exists():
+                subprocess.run([lms, "unload", "--all"], capture_output=True, timeout=30)
+        except Exception:
+            pass
+
+
+def chat(model, messages, temperature):
+    """One reply from the chosen engine. Ollama takes the context size per request; LM Studio sets it when the
+    model loads (in LM Studio's model settings), so it isn't sent."""
+    backend, name = split_model(model)
+    free_other(backend)
+    if backend == "ollama":
+        out = http_json("/api/chat", {"model": name, "stream": False, "messages": messages,
+                                      "options": {"temperature": temperature, "num_ctx": NUM_CTX}}, backend=backend)
+        return out["message"]["content"]
+    out = http_json("/v1/chat/completions", {"model": name, "stream": False, "messages": messages,
+                                             "temperature": temperature}, backend=backend)
+    return out["choices"][0]["message"]["content"]
+
+
+def pick_model(requested, backend=None):
+    """For the command line: check the model exists in its engine; with no model, use that engine's default."""
+    if requested and SEP not in requested and backend:
+        requested = model_id(backend, requested)
+    b, name = split_model(requested) if requested else (backend or DEFAULT_BACKEND, "")
+    try:
+        models = list_models(b)
+    except (urllib.error.URLError, OSError, RuntimeError):
+        sys.exit(unreachable(b) + " and try again.")
     if not models:
-        sys.exit("Ollama has no models yet. Run e.g. `ollama pull llama3.1:8b` first.")
-    if requested:
-        if requested not in models:
-            sys.exit(f"Model '{requested}' not installed. Installed: {', '.join(models)}")
-        return requested
-    return DEFAULT_MODEL if DEFAULT_MODEL in models else models[0]
+        sys.exit({"ollama": "Ollama has no models yet. Run e.g. `ollama pull qwen2.5:14b` first.",
+                  "lmstudio": "LM Studio has no models yet. Download one in LM Studio first."}[b])
+    if name:
+        if name not in models:
+            sys.exit(f"Model '{name}' not found in {BACKENDS[b]['label']}. Available: {', '.join(models)}")
+        return model_id(b, name)
+    return model_id(b, default_model(b, models))
 
 
 def sanitize_feedback(text):
@@ -362,19 +464,9 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
             msg = user + "\n\nYour previous draft had problems: " + "; ".join(problems) + ". Rewrite it " + " and ".join(asks) + "."
         else:
             msg = user
-        out = http_json(
-            "/api/chat",
-            {
-                "model": model,
-                "stream": False,
-                "options": {"temperature": 0.4 + 0.2 * attempt, "num_ctx": 8192},
-                "messages": [
-                    {"role": "system", "content": system_prompt(length, grade_level)},
-                    {"role": "user", "content": msg},
-                ],
-            },
-        )
-        text = sanitize_feedback(out["message"]["content"])
+        reply = chat(model, [{"role": "system", "content": system_prompt(length, grade_level)},
+                             {"role": "user", "content": msg}], temperature=0.4 + 0.2 * attempt)
+        text = sanitize_feedback(reply)
         if length == "detailed":
             text = fix_headings(text)
         words = wrong_level_words(text, bad) + named_levels(text)  # the teacher's level is added below, never by the model
@@ -404,7 +496,8 @@ def main():
     ap.add_argument("submissions", type=Path, help="folder of .txt/.md student submissions")
     ap.add_argument("--rubric", type=Path, required=True, help="text file describing the assignment/rubric")
     ap.add_argument("--out", type=Path, default=Path("feedback"), help="output folder (default: feedback/)")
-    ap.add_argument("--model", help="Ollama model name (default: qwen2.5:14b)")
+    ap.add_argument("--model", help="model name (default: qwen2.5:14b in Ollama, qwen2.5-14b-instruct-mlx in LM Studio)")
+    ap.add_argument("--backend", choices=list(BACKENDS), help="model engine: ollama (default) or lmstudio")
     ap.add_argument("--grade", type=int, choices=[9, 10, 11, 12], default=9, help="grade level (9-12)")
     ap.add_argument("--length", choices=list(LENGTHS), default=DEFAULT_LENGTH, help="sentence, paragraph or detailed")
     ap.add_argument("--level", default="", help="optional teacher-set level for all work, e.g. 'Developing+'")
@@ -415,9 +508,9 @@ def main():
         sys.exit(f"No .txt or .md files found in {args.submissions}")
 
     rubric = args.rubric.read_text(encoding="utf-8")
-    model = pick_model(args.model)
+    model = pick_model(args.model, args.backend)
     args.out.mkdir(parents=True, exist_ok=True)
-    print(f"Using model: {model}  ({len(files)} submissions)")
+    print(f"Using model: {describe(model)}  ({len(files)} submissions)")
 
     for i, f in enumerate(files, 1):
         print(f"[{i}/{len(files)}] {f.stem} ...", end=" ", flush=True)
