@@ -67,3 +67,5 @@ If Course Hub is unreachable the page says so and falls back to:
 - `standards/` - 2026-27 learning-standards PDFs (parsed on load).
 - `courses.json` - fallback course list, quarter dates, department rules.
 - `.env.local` - Course Hub URL/key (git-ignored).
+- `WORKFLOW.md` - assessment workflow plan and status. `ARCHITECTURE.md` - how the pieces fit.
+  `TEAMS-ASSIGNMENT-SETUP.md` - setting up assignments. `skills/` - copies of the workflow's Claude skills.

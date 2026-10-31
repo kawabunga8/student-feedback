@@ -38,6 +38,10 @@ exactly what this project is trying to eliminate.
      say so in the instructions so students know to attach images directly
      (to the Assignment or a ClassNotebook page) rather than describe their
      work in text.
+   - Seen on ICT 9 Task 2 (2026-10-30): submissions were a mix of Class
+     Notebook pages, SharePoint links, and "Turned in" with nothing attached
+     (the work was in the notebook). Teams' grading panel couldn't display
+     the SharePoint files, so Notebook pages are the easiest to collect.
 
 2. **Write instructions in the `student-feedback` app's parseable format.**
    From the app's README, use one of these recognized labels followed by a short,
@@ -60,6 +64,14 @@ exactly what this project is trying to eliminate.
      thinking.
    - Skip the checklist format entirely for genuinely one-sentence tasks (the app
      ignores it below a length threshold anyway).
+   - Seen on ICT 9 Task 2 (2026-10-30): the instructions had numbered tasks
+     but no recognized label, so the app had nothing to build a checklist
+     from. One added line such as `Success criteria: 5+ app ideas; how each
+     helps client; compare on three questions; justified choice; contextual
+     factors` fixes that, either in Teams or pasted into the app.
+   - The full instructions, including the assessment descriptors, can be read
+     back from the assignment's `...` menu → **Student view**. That's how they
+     get into the app's instructions box.
 
 3. **Decide and tag the learning standard(s) up front, not at grading time.**
    - `courses.json` / Course Hub already map each course to a department (ADST,
@@ -84,6 +96,10 @@ exactly what this project is trying to eliminate.
      convention (e.g. `Unit3-Lesson2-StudentName`), so a later batch-pull (OneNote
      via Microsoft 365 connector, or auto-fetched links/attachments) can be
      scripted or scanned predictably instead of hunted for.
+   - Page titles drift. Task 2 asked for a page named "Stage 2 – Define &
+     Ideate", but at least one student titled theirs "Task 2". Distributing a
+     pre-titled page to every student from the Class Notebook tools would
+     remove the guesswork.
 
 ## What a background/future session should do with this
 
@@ -105,5 +121,9 @@ should:
 - Whether Teams Assignments API (via `mcp__Microsoft_365__teams_*` tools) supports
   creating an Assignment directly, or whether this always needs the built-in
   browser / manual entry in Teams. To be confirmed when this is actually built.
+  (Update 2026-10-30: the Microsoft 365 connector is blocked by RCS
+  Conditional Access, so creation goes through the browser. Shingo's
+  `rcs-teams-and-myschool-access` skill covers creating Teams assignments
+  as drafts.)
 - Exact tag/label convention for recording the targeted learning standard per
   assignment (title prefix vs. instructions line vs. a separate tracking sheet).
