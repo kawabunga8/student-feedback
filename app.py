@@ -7,6 +7,7 @@ import html
 import io
 import json
 import re
+import secrets
 import subprocess
 import tempfile
 import zipfile
@@ -181,6 +182,112 @@ def parse_upload(filename, raw, mode):
         return _split_text(text, stem) if mode != "whole" else [(stem, text.strip())]
     text = raw.decode("utf-8-sig", "replace")
     return _split_text(text, stem) if mode != "whole" else [(stem, text.strip())]
+
+
+# Saved assignment records and the Teams class -> Course Hub mapping. Outside this repo, next to the automation
+# Chrome profile. They hold assignment details only, never student work.
+APP_DATA = Path.home() / "Library" / "Application Support" / "student-feedback"
+ASSIGNMENTS_DIR = APP_DATA / "assignments"
+CLASS_MAP = APP_DATA / "class-map.json"
+ASG_ID = re.compile(r"asg-[a-z0-9-]{6,48}")
+RECORD_KEYS = ("id", "title", "course", "grade", "term", "teams", "instructions", "focus", "standards", "length", "design", "sources")
+
+
+def _atomic_write_json(path, data):
+    """Write JSON so an interrupted save can never leave a half-written file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _read_json(path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def list_assignment_records():
+    out = []
+    for p in ASSIGNMENTS_DIR.glob("asg-*.json"):
+        r = _read_json(p, None)
+        if isinstance(r, dict) and r.get("id"):
+            out.append({"id": r["id"], "title": r.get("title", ""), "course": (r.get("course") or {}).get("label", ""),
+                        "version": r.get("version", 0), "updated": r.get("updated", "")})
+    return sorted(out, key=lambda r: r["updated"], reverse=True)
+
+
+def load_assignment_record(aid):
+    if not ASG_ID.fullmatch(aid or ""):
+        raise ValueError("bad assignment id")
+    r = _read_json(ASSIGNMENTS_DIR / f"{aid}.json", None)
+    if not isinstance(r, dict):
+        raise FileNotFoundError(aid)
+    return r
+
+
+def _criteria_of(r):
+    return [c.get("text", "") for c in ((r.get("design") or {}).get("criteria") or []) if isinstance(c, dict)]
+
+
+class VersionConflict(Exception):
+    """The record was saved somewhere else (another tab or window) after the page loaded it."""
+    def __init__(self, current):
+        super().__init__("saved elsewhere")
+        self.current = current
+
+
+_save_lock = threading.Lock()   # one save at a time, so two requests can't interleave a read and a write
+
+
+def save_assignment_record(rec, base_version=None):
+    """Save a new version of an assignment record. The history notes what changed, and whether the change can
+    make existing drafts and review marks outdated (instructions, standards or success criteria).
+    An update must name the version the page loaded (base_version). If the saved file has moved on since,
+    nothing is written and VersionConflict carries the current record."""
+    with _save_lock:
+        return _save_assignment_record(rec, base_version)
+
+
+def _save_assignment_record(rec, base_version):
+    rec = {k: rec[k] for k in RECORD_KEYS if k in rec}
+    aid = rec.get("id") or f"asg-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(4)}"
+    if not ASG_ID.fullmatch(aid):
+        raise ValueError("bad assignment id")
+    old = _read_json(ASSIGNMENTS_DIR / f"{aid}.json", None)
+    old = old if isinstance(old, dict) else None
+    if old and base_version != old.get("version"):
+        raise VersionConflict(old)
+    same = lambda k: json.dumps((old or {}).get(k), sort_keys=True) == json.dumps(rec.get(k), sort_keys=True)
+    changed = [k for k in RECORD_KEYS if k not in ("id", "sources") and not same(k)] if old else ["created"]
+    if old and not changed:
+        return old
+    content = bool(old) and (any(k in changed for k in ("instructions", "focus", "standards")) or _criteria_of(old) != _criteria_of(rec))
+    kind = "created" if not old else "content" if content else "title" if changed == ["title"] else "details"
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    version = (old or {}).get("version", 0) + 1
+    history = ((old or {}).get("history") or [])[-49:] + [{"version": version, "at": now, "changed": changed, "kind": kind}]
+    rec.update(id=aid, version=version, created=(old or {}).get("created", now), updated=now, history=history)
+    _atomic_write_json(ASSIGNMENTS_DIR / f"{aid}.json", rec)
+    return rec
+
+
+def save_class_mapping(p):
+    """Shingo's confirmed link from a Teams class name to a Course Hub offering, per school year."""
+    year, cls, course = str(p.get("schoolYear", "")).strip(), str(p.get("className", "")).strip(), p.get("course")
+    if not year or not cls or not isinstance(course, dict) or not course.get("name"):
+        raise ValueError("schoolYear, className and course are required")
+    with _save_lock:
+        m = _read_json(CLASS_MAP, {})
+        m.setdefault(year, {})[cls] = {"name": course["name"], "label": course.get("label", ""),
+                                       "sectionIds": course.get("sectionIds") or [],
+                                       "confirmed": datetime.now().astimezone().isoformat(timespec="seconds")}
+        _atomic_write_json(CLASS_MAP, m)
+        return m
 
 
 ASSESSMENT = Path.home() / "Desktop" / "Teaching" / "Assessment"   # Assessment/<year>/<quarter>/<course>/<assignment>/FirstName_LastName.txt
@@ -849,6 +956,7 @@ $("#go").onclick = async () => {
   $("#go").disabled = true;
   let i = 0, failed = 0;
   for (const c of cards) {
+    if(window.feedbackStopRequested) break;
     i++;
     const name = c.querySelector(".name").value.trim() || "Student " + i;
     const res = c.querySelector(".result");
@@ -868,10 +976,10 @@ $("#go").onclick = async () => {
       failed++; res.innerHTML = '<div class="out err"></div>'; res.firstChild.textContent = err.message;
     }
   }
-  $("#status").textContent = (failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
+  $("#status").textContent = (window.feedbackStopRequested ? "Stopped after " + i + " students. Existing drafts remain available." : failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -898,6 +1006,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js"):
+            asset = HERE / self.path.lstrip("/")
+            self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
             try:
                 cfg = course_data()
@@ -922,6 +1033,15 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:  # e.g. macOS hasn't allowed this app to read the Desktop
                 self._send(200, {"folders": [], "error": f"Can't read {ASSESSMENT}: {e.strerror or e}. If macOS blocked it, allow "
                                                        "Terminal (or the launcher) under System Settings > Privacy & Security > Files and Folders."})
+        elif self.path == "/api/assignments":
+            self._send(200, {"assignments": list_assignment_records()})
+        elif self.path.startswith("/api/assignments/"):
+            try:
+                self._send(200, {"assignment": load_assignment_record(urllib.parse.unquote(self.path.rsplit("/", 1)[1]))})
+            except (ValueError, FileNotFoundError):
+                self._send(200, {"error": "Assignment not found."})
+        elif self.path == "/api/class-map":
+            self._send(200, {"map": _read_json(CLASS_MAP, {})})
         elif self.path == "/api/standards":
             docs = load_standards()
             self._send(200, {d: [{"id": x["id"], "label": x["label"]} for x in v] for d, v in docs.items()})
@@ -969,6 +1089,27 @@ class Handler(BaseHTTPRequestHandler):
                 if not rows:
                     return self._send(200, {"error": "No student work found in that folder."})
                 return self._send(200, {"students": [{"name": a, "work": b} for a, b in rows]})
+            except Exception as e:
+                return self._send(200, {"error": f"{type(e).__name__}: {e}"})
+        if self.path in ("/api/assignments", "/api/class-map"):
+            # Saving needs a JSON request from this app's own page: another website can't send one without the
+            # browser asking first (a preflight this server never approves), and a stated Origin must be this app.
+            origin = self.headers.get("Origin")
+            if not self.headers.get("Content-Type", "").startswith("application/json") or \
+                    (origin and origin not in (f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}")):
+                return self._send(403, {"error": "forbidden"})
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                if n > 500_000:
+                    raise ValueError("too large")
+                body = json.loads(self.rfile.read(n))
+                if self.path == "/api/assignments":
+                    try:
+                        return self._send(200, {"assignment": save_assignment_record(body.get("assignment") or {}, body.get("baseVersion"))})
+                    except VersionConflict as c:
+                        return self._send(409, {"error": "This assignment was saved somewhere else after this page opened it.",
+                                                "conflict": True, "current": c.current})
+                return self._send(200, {"map": save_class_mapping(body)})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
         if self.path != "/api/generate":
