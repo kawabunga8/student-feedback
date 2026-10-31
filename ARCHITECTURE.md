@@ -14,6 +14,20 @@ don't need a Claude session. Claude builds and maintains the tooling and
 handles what the local side can't. This document describes the system as it
 is today and, under "Target", how it moves toward that goal.
 
+## Status at a glance (2026-10-31)
+
+| Part | Status |
+|---|---|
+| student-feedback app and `feedback.py`: drafting, rule checks, level sentence, Course Hub class lists | Implemented and in use |
+| Prompt guard: student work is evidence, not instructions | Implemented 2026-10-31 |
+| Engine switch (Ollama / LM Studio) | Implemented; tested against stand-in servers only. Ollama is the only engine installed |
+| `stage_submissions.py` | Implemented (built from the other Claude account); not run in the 2026-10-30/31 sessions |
+| Teams and MySchool click-paths | Mapped by hand; the posting actions (Teams Return, MySchool save) are **not yet verified** |
+| `tools/spike_onenote_text.py` | Written; **not yet run against a real OneNote page**, so reading notebook text is unproven |
+| `skills/phase-b-upload/SKILL.md` | Draft, pilot mode; posting unverified |
+| Data contracts: manifest, name mapping, collection outcomes, approval record, posting states | **Proposed** (decided 2026-10-31); not built |
+| `collect.py`, vision fallback, `post_teams.py`, `post_myschool.py`, app buttons | **Proposed**; not built |
+
 ## Overview
 
 ```mermaid
@@ -132,6 +146,10 @@ without code changes.
 - **Repo:** code, docs, the standards PDFs, and `skills/<name>/SKILL.md`
   copies of the workflow skills (skills are tied to a Claude account; the repo
   copy lets either account use them).
+- **Planned data files (not built yet):** `name-mapping.json` per class in the course folder, and
+  `manifest.json` per assignment folder, both under the Assessment folder on the Mac. `.gitignore` also
+  excludes those names (and their `.tmp` files) and a `collected/` folder, in case a script is ever run
+  inside the repo.
 - **`Claude outputs/`:** where the Claude desktop app saves files Claude
   delivers while this folder is connected. Untracked; not part of the
   project.
@@ -222,19 +240,77 @@ signs in to once.
 - Whether Python and Playwright are installed on the Mac. Not checked: the
   bridge shell is a Linux VM and can't see the Mac's own tools.
 
-**Migration path:**
-1. Spike: a short Playwright script on the Mac opens a Class Notebook page
-   read-only and reports whether its text can be read from OneNote's frame.
-   This proves sign-in and text extraction. Written as
-   `tools/spike_onenote_text.py`; not yet run.
-2. `collect.py` for one assignment → `collected/` → `stage_submissions.py --commit`.
-3. Vision fallback with `qwen2.5vl:7b` for pages with images or handwriting.
-4. `post_teams.py --dry-run` (types the feedback but doesn't Return), then
-   `--return` for one student with Shingo watching.
-5. `post_myschool.py`, the same way.
-6. Buttons in the app, then take Claude out of the data path. The
-   `phase-a-collect-and-draft` and `phase-b-upload` skills become guides to
-   running and fixing the scripts.
+**Build order:** see `WORKFLOW.md`, "What to build next" (revised 2026-10-31). The data it relies on is
+defined below in "Data contracts".
+
+## Data contracts (decided 2026-10-31; not built yet)
+
+These sit around the teacher checkpoint, so collection and posting can be checked, resumed and audited.
+Nothing below is in git: it all lives in the Assessment folder on the Mac.
+
+**Manifest.** One `manifest.json` per assignment folder, keyed by each student's Course Hub ID. It points
+to the class's name mapping (below) instead of copying names, so the two can't drift apart. It records:
+which student and assignment the work belongs to, where it came from, when and how it was collected, any warnings, the
+approval record, and the state of each destination. The original capture (page HTML, image or file) is kept
+next to the extracted text. Every save is atomic: write `manifest.json.tmp` in the same folder, flush and
+fsync it, then `os.replace` it over `manifest.json`, so an interrupted save can never leave a half-written
+manifest. The name mapping is saved the same way.
+
+**Student identity.** Course Hub's student ID is the key everywhere. The app already keeps it: it reads
+each class list from Course Hub (`/api/courses/<id>/roster`), removes duplicates by that ID, and
+`stage_submissions.py` matches against it (checked in the code on 2026-10-31). Names are mappings, not
+identities: each class has one `name-mapping.json`, in its course folder
+(`Assessment/<year>/<quarter>/<course>/`), keyed by Course Hub ID, giving each student's name as Teams,
+MySchool and the Class Notebook show it. Shingo checks it once per class (for example at the start of a
+term). Every assignment in that class uses the same mapping. Anything that doesn't match it exactly is
+flagged, never guessed.
+
+The app has kept class lists in memory only, never on disk. The manifest and the mapping change that: they
+hold Course Hub IDs and names in the Assessment folder on the Mac, outside git, alongside the student work
+already stored there. Shingo confirmed this on 2026-10-31, as consistent with the local-first design.
+
+**Collection outcomes.** Each student ends collection in exactly one of these states:
+
+| Outcome | Meaning |
+|---|---|
+| Collected | Text read; nothing on the page beyond text was detected |
+| Collected, completeness unverified | Text read, but the page has images, canvases, drawings or embedded files, or may hold handwriting the text can't capture |
+| Needs vision | The work is mainly images or handwriting; the local vision model must transcribe it, and uncertain passages are flagged, never filled in |
+| Page found but empty | The right page exists but holds no work |
+| Extraction failed | A technical failure; retry or check by hand |
+| No submission found | No page, attachment or link for this assignment |
+| Needs attention | The work couldn't be tied confidently to one student and one assignment |
+
+Only "No submission found" may lead to feedback about missing work, and only after Shingo confirms it. A
+page chosen by title returns its evidence (title, date, opening text), with an explicit "no confident
+match" outcome instead of a best guess.
+
+**Approval record.** Approval binds the whole reviewed result:
+- the exact Teams feedback;
+- the teacher-selected level;
+- the MySchool comment (a short comment Shingo reviews separately; never cut down automatically);
+- the source fingerprint (SHA-256 of the collected work);
+- the assignment and rubric version (SHA-256 of the instructions and any ticked standards).
+
+A fingerprint of all five together is stored with the time of approval. If any of them changes afterward,
+the approval is void and must be given again. Posting reads only approved records.
+
+**Posting states.** Teams and MySchool are tracked separately for each student: not started → posting →
+posted, unverified → verified, or failed (with the error). A destination counts as verified only after
+reading it back and finding it matches the approved record: in Teams, the feedback text shown in the
+student's panel; in MySchool, the level bubble(s) and the comment. A "Returned" status alone proves
+nothing, because it may come from an earlier manual return. After an uncertain result (a timeout, an
+unexpected page), the script inspects the destination before clicking anything again, and a retry resumes
+only the unfinished destination. Each posting attempt's run record keeps the destination identity actually
+used (the student's name as matched on screen in Teams or MySchool, the assignment title, and the time), so
+a later change to the name mapping can't rewrite what was posted where.
+
+**Model safety.** The drafting model only returns text: it has no tools and can't post or browse. The prompt
+marks student work as evidence and tells the model not to follow instructions inside it; the quotation
+marks around the work are only a delimiter, not a defence. Teacher review stays mandatory. The automatic
+checks catch rule breaks (level names, invented command terms, wording to copy, missing headings) but can't
+confirm that praise is supported or that each criterion is really met; that's the teacher's review. Showing
+each criterion beside the matching evidence would make that review faster (later).
 
 ## Privacy boundaries
 
@@ -261,3 +337,7 @@ signs in to once.
   opening them is a popup the pane blocks.
 - Not yet verified: what Teams' Return sends to the student, and how
   MySchool's Assessment tab saves. See `WORKFLOW.md`, "What to build next".
+- Reading a notebook page's text can never prove it's complete: handwriting
+  may not appear as a separate element. The test script reports
+  completeness as unverified and counts large images, canvases, drawings
+  and embedded files it can see.

@@ -9,3 +9,11 @@ submissions/
 __pycache__/
 .vercel
 .DS_Store
+
+# Assessment data files (planned). They live in ~/Desktop/Teaching/Assessment, outside this repo; these lines
+# keep them out of git if a script is ever pointed at a folder inside it.
+manifest.json
+manifest.json.tmp
+name-mapping.json
+name-mapping.json.tmp
+collected/

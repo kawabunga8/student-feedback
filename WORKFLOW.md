@@ -9,7 +9,8 @@ actions) is in progress; see "Session log: 2026-10-30, RCS account" below.
 One test student's ICT 9 Task 2 work and the Task 2 instructions from Teams
 are loaded in the feedback app. Next: generate and review that draft, then
 the first real Return in Teams and the first save in MySchool. A draft
-`phase-b-upload` skill is in `skills/phase-b-upload/SKILL.md`.
+`phase-b-upload` skill is in `skills/phase-b-upload/SKILL.md`. For what is implemented versus only
+proposed, see `ARCHITECTURE.md`, "Status at a glance".
 
 Also useful, in order of likely relevance:
 - The `phase-a-collect-and-draft` skill (saved on Shingo's Claude account,
@@ -55,7 +56,7 @@ reviewing and approving every feedback draft before it goes anywhere.
 the process.** Scripts on the Mac do the navigating and clicking, the local
 model does the content work, Shingo reviews, and Claude builds and maintains
 the tooling rather than sitting in the data path. See `ARCHITECTURE.md`,
-"Target", for the proposed split and the migration path.
+"Target", for the proposed split, and "What to build next" below for the build order.
 
 See also: `TEAMS-ASSIGNMENT-SETUP.md` — the upstream half (setting up the
 Assignment itself so this pipeline runs cleanly).
@@ -368,6 +369,26 @@ using the trace IDs above if Shingo wants the faster path back.
 
 ## What to build next
 
+**Revised build order (2026-10-31, after an outside review of the plan):**
+1. **Prove read access and extraction quality** with `tools/spike_onenote_text.py` (written; **not yet run
+   against a real OneNote page**), on several kinds of page: typed text only, handwriting (ink), a pasted image, and more than one text box. It reports
+   completeness as unverified and lists the embedded items it found.
+2. **Define the data contracts** in `ARCHITECTURE.md`: the manifest (atomic writes, keyed by Course Hub
+   student ID), the name mapping for Teams, MySchool and the notebook, collection outcomes, the approval
+   record and per-destination posting states.
+3. **Build collection for one assignment format.**
+4. **Add the vision model** only for pages that need it.
+5. **Build posting dry runs** that show the destination student, the assignment and the exact values to be
+   posted, without posting.
+6. **Verify one real Teams return and one MySchool save** by reading them back, then test an interrupted
+   run and a retry.
+7. **Add app buttons** once those operations are dependable.
+
+**Next milestone:** one complete, traceable student record, from captured work through approved feedback to
+values read back from Teams and MySchool. The numbered list below is the earlier punch list, kept for its
+detail; where it differs, the order above wins.
+
+
 1. ~~Test the OneNote/SharePoint pull~~ — done.
 2. ~~Folder-staging script~~ — done, `stage_submissions.py` deployed.
 3. ~~Decide the ClassNotebook read method~~ — done, screenshot/vision.
@@ -405,7 +426,7 @@ using the trace IDs above if Shingo wants the faster path back.
     script, run on the Mac, that opens the ICT 9 Class Notebook by the
     mapped route with a signed-in persistent Chrome profile and prints one
     page's text. Success means collection can move to the Mac. Then follow
-    the migration path in `ARCHITECTURE.md`. Written as
+    the revised build order at the top of this section. Written as
     `tools/spike_onenote_text.py` (setup and run steps at the top of the
     file); waiting for Shingo to run it on the Mac.
 13. Step 6's posting test still matters under the local-first goal: the

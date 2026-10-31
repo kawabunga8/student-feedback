@@ -17,6 +17,11 @@ Phase B of the RCS assessment workflow (see `WORKFLOW.md` in `~/Repos-folder/stu
 
 ## 1. Read the approved folder
 
+> **Planned change (2026-10-31):** Phase B will read the approval records in the assignment's
+> `manifest.json` (see `ARCHITECTURE.md`, "Data contracts") instead of the `HOLD` convention below. Approval
+> will bind the exact feedback, level, MySchool comment, source fingerprint and assignment/rubric version,
+> and any change voids it. Until the manifest exists, use the conventions below.
+
 Folder: `~/Desktop/Teaching/Assessment/<year>/<quarter>/<course>/<assignment>/`. Read it on Shingo's computer, never by staging copies.
 
 - Feedback files are `FirstName_LastName.feedback.md`, in the folder itself or its `feedback/` subfolder. *(Confirm against where `phase-a-collect-and-draft` writes them.)*
@@ -32,11 +37,11 @@ Before posting anything, show Shingo one summary: assignment, course or team, nu
 1. Open Teams and click the **global Assignments icon** in the left rail, not a team's own Assignments tab (that one is an iframe and ignores clicks). Re-navigate fresh; don't use the browser's back button.
 2. Find the assignment with **Search by assignment title** and press Return. Open it to see the roster.
 3. For each ready student, match the Teams name to the file name (underscores as spaces). If the match is ambiguous or missing, skip and log.
-   - If the status is already **Returned**, skip and log ("already returned"). Re-return only if Shingo asks.
+   - If the status is already **Returned**, don't assume it's done: it may be an earlier manual return. Open the panel and compare the feedback shown with the approved feedback. If they match, log it as verified; if not, stop and ask Shingo.
 4. Open the student's grading panel. If the **Feedback** box already has text, skip and log ("existing feedback"). Otherwise click it and type the feedback.
    - Leave Points as is ("No points"; levels live in MySchool).
 5. Click **Return**. *(Unverified: which option the dropdown arrow offers, and whether the plain button notifies the student. Record it under "Verified behaviour".)*
-6. Use the prev/next arrows to move to the next student. Screenshot after each return to confirm the status changed.
+6. After each Return, reopen the student's panel and confirm the feedback shown matches the approved text before logging it as verified. After a timeout or an unexpected page, check the panel before clicking anything again. Then use the prev/next arrows to move on.
 
 ## 3. MySchool (level + comment)
 
@@ -44,11 +49,11 @@ Before posting anything, show Shingo one summary: assignment, course or team, nu
 2. Left menu **Assignments** → Grade grid → choose the course → **View All Assignments** (bottom) → click the assignment title → **Assessment** tab.
 3. For each ready student's card:
    - Click the level bubble that matches the mapped code. If the card has **more than one** criterion cluster and the feedback gives one level, stop and ask Shingo whether that level applies to every criterion.
-   - Type the same feedback text into the **comment** box. *(Confirm with Shingo whether MySchool should get the full text or a shorter version.)*
+   - Type the approved MySchool comment into the **comment** box: a short comment Shingo reviewed separately, never the Teams feedback cut down automatically.
    - Leave "Upload correction" alone.
    - Save. *(Unverified: whether this is a Save button, auto-save, or a separate publish step, and what the status dropdown should be set to.)*
 4. Don't change the assignment's own **Publish** setting. If it's unpublished, students won't see grades until Shingo publishes it, so say so in the report.
-5. Confirm on the Grade grid that the cell shows the new level.
+5. Reopen the card and confirm the level and comment match the approved record, and check the Grade grid cell shows the new level. Only then log MySchool as verified. Teams and MySchool are logged separately, so a retry finishes only the unfinished one.
 
 ## 4. Report
 
