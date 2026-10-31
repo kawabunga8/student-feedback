@@ -20,10 +20,12 @@ is today and, under "Target", how it moves toward that goal.
 |---|---|
 | student-feedback app and `feedback.py`: drafting, rule checks, level sentence, Course Hub class lists | Implemented and in use |
 | Prompt guard: student work is evidence, not instructions | Implemented 2026-10-31 |
+| Teacher workspace (`ui/workspace.js`, `ui/workspace.css`): Design assignment, Setup, Collect, Draft & review, Export & posting; review marks that any later edit voids; reviewed JSON snapshot; **assisted posting** (open Teams/MySchool, copy the approved feedback, comment and level code, tick when done; edits after posting are flagged) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. Not saved automatically (export before closing); the snapshot is not posting authorization; automated collection and posting not connected |
+| Saved assignment records, Design step and Choose from Teams (`ui/assignment.js`; `/api/assignments`, `/api/class-map`) | Implemented 2026-10-31 (steps 1 and 2 of the assignment-record plan); checked in a browser with synthetic data. Choose from Teams reads pasted Student view text for now; the read-only picker, Create draft in Teams, and refresh with change detection are not built |
 | Engine switch (Ollama / LM Studio) | Implemented; tested against stand-in servers only. Ollama is the only engine installed |
 | `stage_submissions.py` | Implemented (built from the other Claude account); not run in the 2026-10-30/31 sessions |
 | Teams and MySchool click-paths | Mapped by hand; the posting actions (Teams Return, MySchool save) are **not yet verified** |
-| `tools/spike_onenote_text.py` | Written; **not yet run against a real OneNote page**, so reading notebook text is unproven |
+| `tools/spike_onenote_text.py` | **Typed page: passed (2026-10-31).** On one real typed page, the automated Chrome profile signed in, the script found OneNote's `#PageContentContainer` (3,271 characters, menus and navigation left out), detected no non-text elements in it, and Shingo confirmed by eye that every answer was there, in order, to the bottom of the page. **Not yet tested:** a page with a pasted image, a page with handwriting, a page with more than one text box, and moving between students unattended |
 | `skills/phase-b-upload/SKILL.md` | Draft, pilot mode; posting unverified |
 | Data contracts: manifest, name mapping, collection outcomes, approval record, posting states | **Proposed** (decided 2026-10-31); not built |
 | `collect.py`, vision fallback, `post_teams.py`, `post_myschool.py`, app buttons | **Proposed**; not built |
@@ -110,6 +112,10 @@ from using DNS rebinding to read class lists.
 | GET | `/api/assessments` | Folders under the Assessment folder that hold work |
 | GET | `/api/standards` | Parsed learning-standards PDFs |
 | GET | `/api/models` | Models from both engines, grouped by engine, plus which engine isn't running |
+| GET | `/api/assignments` | Saved assignment records, newest first |
+| GET | `/api/assignments/<id>` | One saved assignment record |
+| POST | `/api/assignments` | Save a new version of an assignment record (JSON only, from the app's page) |
+| GET, POST | `/api/class-map` | Confirmed Teams class to Course Hub offering matches, per school year |
 | POST | `/api/parse` | Split uploaded files into one entry per student |
 | POST | `/api/load` | Load one Assessment folder |
 | POST | `/api/generate` | Draft feedback for one student |
@@ -225,11 +231,12 @@ doesn't apply, and it can reuse a persistent browser profile that Shingo
 signs in to once.
 
 **To test before building on it:**
-- Whether RCS Conditional Access allows an automated browser. Plan: the
-  installed Chrome (`channel="chrome"`) with its own persistent profile,
-  signed in once by Shingo; MFA stays with him.
-- Whether OneNote on the web exposes page text in the frame's DOM
-  (expected, untested). The frame (`WebApplicationFrame`) is loaded by a
+- Whether RCS Conditional Access allows an automated browser. **Answered
+  2026-10-31: yes.** The installed Chrome (`channel="chrome"`) with its own
+  persistent profile, signed in once by Shingo, got in.
+- Whether OneNote on the web exposes page text in the frame's DOM.
+  **Answered for typed text on 2026-10-31: yes**, completely, checked by eye
+  against Chrome. Handwriting and pasted images still to test. The frame (`WebApplicationFrame`) is loaded by a
   form post and has no `src`, so it can't be opened on its own; Playwright
   reads it in place.
 - Memory: with 16 GB, models run one at a time (see "Memory" above).
@@ -242,6 +249,43 @@ signs in to once.
 
 **Build order:** see `WORKFLOW.md`, "What to build next" (revised 2026-10-31). The data it relies on is
 defined below in "Data contracts".
+
+## Assignment records (built 2026-10-31)
+
+The saved assignment record is the centre of an assignment: Setup, the Design step and (later) collection and
+approval read the same record. Records hold no student data.
+
+- **Where:** `~/Library/Application Support/student-feedback/assignments/asg-<date>-<random>.json`, one file per
+  assignment, outside git, written atomically (temporary file, fsync, rename). `class-map.json` in the same folder
+  holds Shingo's confirmed matches from a Teams class name to a Course Hub offering, per school year.
+- **Contents:** local ID; title; Course Hub offering (name, label, section IDs, school year); grade; term;
+  student-facing instructions; the teacher's feedback focus (a "Must include:" list, never shown to students); ticked
+  standard labels; feedback length; Teams references (class name, due date, reference materials, and the title and
+  instructions as imported); the design (purpose, directions, required evidence, success criteria each with how
+  students show it and a linked standard, submission setup, feedback setup, notes for marking); where each Setup field
+  came from and when; version, created and updated times, and a history of the last 50 saves.
+- **Versions:** a save that changes something adds a version and a history entry naming the changed fields and a
+  kind: `created`, `content` (instructions, feedback focus, standards or success criteria changed), `title` (only the
+  name changed) or `details` (anything else). A save with no changes adds nothing.
+- **Drafts and review marks:** each draft remembers the instructions and standards it was written against. When
+  Setup's change, the draft is marked "possibly outdated", and its review mark is void because the review binds the
+  instructions and standards. A name-only change doesn't mark drafts outdated, but it does void review marks, because
+  the reviewed record includes the assignment name.
+- **Course Hub is authoritative:** a saved course is found by its Course Hub section IDs first, then by name. A Teams
+  class is linked to a Course Hub offering only when Shingo confirms it; the confirmed match is reused for that class
+  for the school year. The grade comes from Course Hub's grades for the course (if there is more than one, Shingo
+  picks); it is never guessed from the assignment name.
+- **Student-facing and teacher-only stay apart:** only the title and the student-facing instructions are offered for
+  copying into Teams. The feedback focus goes into Setup's instructions for the local model only, under a "Teacher's
+  feedback focus (not shown to students):" heading. Notes for marking and MySchool comment guidance appear only in
+  the teacher-only brief (Design preview and the top of Draft & review).
+- **Two tabs:** each save names the version the page loaded; if the file has moved on since, nothing is written and
+  the page offers to load the newer version or save its own on top. Saves are serialised by a lock.
+- **Server guards:** saving needs a JSON request from the app's own page (`Content-Type: application/json`; any
+  `Origin` must be the app's), bodies over 500 KB are refused, and record IDs must match `asg-[a-z0-9-]`.
+
+Not built yet: the read-only Teams picker, wiring the field buttons to it, Create draft in Teams, and refresh with
+change detection linked to the manifest, collection and approval (steps 3 to 6 in `WORKFLOW.md`).
 
 ## Data contracts (decided 2026-10-31; not built yet)
 
@@ -282,8 +326,14 @@ already stored there. Shingo confirmed this on 2026-10-31, as consistent with th
 | Needs attention | The work couldn't be tied confidently to one student and one assignment |
 
 Only "No submission found" may lead to feedback about missing work, and only after Shingo confirms it. A
-page chosen by title returns its evidence (title, date, opening text), with an explicit "no confident
-match" outcome instead of a best guess.
+page chosen by title returns its evidence (title, opening text, and whether it holds the student's own
+answers), with an explicit "no confident match" outcome instead of a best guess. Page dates aren't
+evidence: pages copied from a template keep the template's date (a 2026 submission page showed April 18,
+2022).
+
+**Task wording on the page.** Distributed pages hold the assignment's own wording, with the student's
+answers written in between. Collection separates the two, using the assignment instructions from Teams, so
+the drafting model assesses only what the student wrote and never credits them for the task's wording.
 
 **Approval record.** Approval binds the whole reviewed result:
 - the exact Teams feedback;
@@ -337,6 +387,8 @@ each criterion beside the matching evidence would make that review faster (later
   opening them is a popup the pane blocks.
 - Not yet verified: what Teams' Return sends to the student, and how
   MySchool's Assessment tab saves. See `WORKFLOW.md`, "What to build next".
+- The test script's output must never be followed by pasting a page's source code: OneNote's page source
+  holds live sign-in tokens (seen 2026-10-31). Those tokens must not be shared.
 - Reading a notebook page's text can never prove it's complete: handwriting
   may not appear as a separate element. The test script reports
   completeness as unverified and counts large images, canvases, drawings

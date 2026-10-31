@@ -17,3 +17,5 @@ manifest.json.tmp
 name-mapping.json
 name-mapping.json.tmp
 collected/
+# Reviewed snapshots exported from the workspace hold student work and private notes.
+reviewed-feedback*.json

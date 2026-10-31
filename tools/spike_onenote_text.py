@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Local-first spike: what can a script on this Mac actually collect from a Class Notebook page?
 
-Status (2026-10-31): written, but NOT yet run against a real OneNote page. Its results are unproven.
+Status (2026-10-31): passed on one real typed page (whole text read from OneNote's #PageContentContainer,
+checked by eye). Handwriting, pasted images and multi-box pages not yet tested.
 
 Step 1 of the build order in WORKFLOW.md. It answers:
   1. Does RCS sign-in (Conditional Access, MFA) allow an automated Chrome that you sign in to once?
@@ -34,8 +35,8 @@ Run:
 Options: --full prints all the text instead of the first part; --wait N waits up to N seconds for the
 page (default 60).
 
-Exit codes: 0 text read, no large embedded items found; 4 text read, but the page has embedded items the
-text doesn't capture; 1 no text found; 2 blocked by sign-in policy; 3 setup problem.
+Exit codes: 0 text read, no potential non-text elements detected; 4 text read, potential non-text elements
+detected (inspect them); 1 no text found; 2 blocked by sign-in policy; 3 setup problem.
 """
 import argparse
 import re
@@ -49,20 +50,102 @@ LOGIN_HOSTS = ("login.microsoftonline.com", "login.microsoft.com", "login.live.c
 MIN_CHARS = 200  # less than this is probably just OneNote's own buttons and menus
 MIN_SIDE = 48    # px: smaller images and drawings are toolbar icons, not student content
 
-# Run inside OneNote's frame: count large embedded items whose content the page text can't include.
-MEDIA_JS = """() => {
-  const out = {images: 0, canvases: 0, drawings: 0, videos: 0, frames: 0, files: 0};
-  const kind = {img: "images", canvas: "canvases", svg: "drawings", video: "videos", iframe: "frames",
-                object: "files", embed: "files"};
-  for (const el of document.querySelectorAll("img, canvas, svg, video, iframe, object, embed")) {
-    const tag = el.tagName.toLowerCase();
-    if (tag === "svg" && el.parentElement && el.parentElement.closest("svg")) continue;  // part of a larger drawing
-    const r = el.getBoundingClientRect();
-    if (r.width < %d || r.height < %d) continue;
-    out[kind[tag]] += 1;
+# Run inside OneNote's frame. Lists each large embedded item (images, canvases, drawings, videos, frames,
+# files) with its size, position and label, and, for each place the page title appears, the chain of
+# containers around it with how much text and how many embedded items each holds. That shows which
+# container is the page itself (versus OneNote's menus), so collect.py can read just that part.
+INSPECT_JS = """(title) => {
+  const MIN = %d;
+  // Actually shown (not display:none, invisible or zero-sized) and big enough to be content. Position never
+  // excludes anything inside the page area: work further down, or scrolled past inside OneNote's own scroll box,
+  // still counts. "Parked" items (placed entirely above or left of the frame, like the images OneNote preloads
+  // at y = -1000) are skipped only in the whole-frame list.
+  const shown = el => { const s = getComputedStyle(el);
+                        return s.display !== "none" && s.visibility !== "hidden" && el.getClientRects().length > 0; };
+  const bigEnough = el => { const r = el.getBoundingClientRect(); return r.width >= MIN && r.height >= MIN; };
+  const parked = el => { const r = el.getBoundingClientRect();
+                         return r.bottom + window.scrollY <= 0 || r.right + window.scrollX <= 0; };
+  const media = (root, skipParked) => [...root.querySelectorAll("img, canvas, svg, video, iframe, object, embed")]
+    .filter(el => !(el.tagName.toLowerCase() === "svg" && el.parentElement && el.parentElement.closest("svg"))
+                  && shown(el) && bigEnough(el) && !(skipParked && parked(el)));
+  const kind = {img: "image", canvas: "canvas", svg: "drawing", video: "video", iframe: "frame", object: "file", embed: "file"};
+  const host = el => { try { const s = el.currentSrc || el.src || el.getAttribute("src") || "";
+                             return s ? new URL(s, location.href).host : ""; } catch (e) { return ""; } };
+  const items = media(document, true).map(el => { const r = el.getBoundingClientRect(); return {
+    kind: kind[el.tagName.toLowerCase()], w: Math.round(r.width), h: Math.round(r.height),
+    x: Math.round(r.left), y: Math.round(r.top + window.scrollY),
+    label: (el.getAttribute("alt") || el.getAttribute("aria-label") || el.getAttribute("title") || "").slice(0, 40),
+    src: host(el) }; });
+  const chains = [];
+  if (title) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode()) && chains.length < 3) {
+      if (node.nodeValue.trim() !== title) continue;
+      const chain = [];
+      for (let el = node.parentElement, i = 0; el && el !== document.documentElement && i < 12; el = el.parentElement, i++)
+        chain.push({tag: el.tagName.toLowerCase(), id: (el.id || "").slice(0, 40),
+                    cls: (typeof el.className === "string" ? el.className : "").slice(0, 50),
+                    role: el.getAttribute("role") || "", chars: (el.innerText || "").trim().length, media: media(el, false).length});
+      chains.push(chain);
+    }
   }
-  return out;
-}""" % (MIN_SIDE, MIN_SIDE)
+  // The submission area: start at the page title that isn't in OneNote's navigation, and widen to the
+  // largest container that still holds no menus, toolbars or navigation and only one copy of the title.
+  const UI = '[role="navigation"],[role="tree"],[role="treeitem"],[role="listbox"],[role="menubar"],' +
+             '[role="toolbar"],[role="tablist"],[role="banner"],nav,header';
+  // First choice: OneNote's own page container (seen on the real page on 2026-10-31: #PageContentContainer
+  // inside #WACViewPanel, role "document"). Fallback: start at a copy of the title outside the navigation and
+  // widen while the container holds no menus or navigation; keep the widest result. (OneNote keeps a hidden
+  // second copy of the title next to the visible one, so "the title appears only once" is not a usable test.)
+  let area = document.querySelector("#PageContentContainer")
+          || document.querySelector('#WACViewPanel[role="document"]')
+          || document.querySelector('[role="document"]');
+  let best = area ? Infinity : -1;
+  if (!area && title) {
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = w.nextNode())) {
+      if (node.nodeValue.trim() !== title || node.parentElement.closest(UI)) continue;
+      let a = node.parentElement;
+      for (let up = a.parentElement; up && up !== document.body; up = up.parentElement) {
+        if (up.querySelector(UI) || up.closest(UI)) break;
+        a = up;
+      }
+      const n = (a.innerText || "").trim().length;
+      if (n > best) { best = n; area = a; }
+    }
+  }
+  const areaInfo = area ? {tag: area.tagName.toLowerCase(), id: (area.id || "").slice(0, 40),
+                           cls: (typeof area.className === "string" ? area.className : "").slice(0, 50),
+                           text: (area.innerText || "").trim(),
+                           items: media(area, false).map(el => { const r = el.getBoundingClientRect(); return {
+                             kind: kind[el.tagName.toLowerCase()], w: Math.round(r.width), h: Math.round(r.height),
+                             x: Math.round(r.left), y: Math.round(r.top + window.scrollY),
+                             label: (el.getAttribute("alt") || el.getAttribute("aria-label") || el.getAttribute("title") || "").slice(0, 40),
+                             src: host(el) }; })} : null;
+  return {items, chains, area: areaInfo};
+}""" % MIN_SIDE
+
+
+# Run inside OneNote's frame before reading: scroll the page from top to bottom and back, so anything OneNote
+# only loads when it scrolls into view is in place. Scrolling changes nothing on the page.
+SCROLL_JS = """async () => {
+  const page = document.querySelector("#PageContentContainer") || document.querySelector('[role="document"]');
+  if (!page) return null;
+  let box = page;
+  while (box && !(box.scrollHeight > box.clientHeight + 10 && /(auto|scroll)/.test(getComputedStyle(box).overflowY)))
+    box = box.parentElement;
+  box = box || document.scrollingElement;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const start = box.scrollTop;
+  const steps = Math.min(40, Math.max(1, Math.ceil(box.scrollHeight / Math.max(200, box.clientHeight * 0.8))));
+  for (let i = 1; i <= steps; i++) { box.scrollTop = Math.round(box.scrollHeight * i / steps); await sleep(250); }
+  await sleep(500);
+  box.scrollTop = 0;
+  await sleep(500);
+  return {height: box.scrollHeight, view: box.clientHeight, steps, startedAt: start};
+}"""
 
 
 def read_only(url):
@@ -170,28 +253,70 @@ def main():
                 return 1
 
             frame, name, host, text = best
+            try:
+                scrolled = frame.evaluate(SCROLL_JS)
+            except Exception as e:
+                scrolled = None
+                print(f"(Couldn't scroll the page: {type(e).__name__})")
+            if scrolled:
+                print(f"Scrolled the page top to bottom and back before reading ({scrolled['steps']} steps, "
+                      f"page {scrolled['height']}px tall, window {scrolled['view']}px).")
+                try:
+                    text = frame.locator("body").inner_text(timeout=5000)
+                except Exception:
+                    pass
             text = text.strip()
             try:
-                media = frame.evaluate(MEDIA_JS)
+                info = frame.evaluate(INSPECT_JS, who["page"] if who else "")
             except Exception as e:
-                media = None
-                print(f"(Couldn't count embedded items: {type(e).__name__})")
-            embedded = sum(media.values()) if media else 0
+                info = None
+                print(f"(Couldn't inspect the page: {type(e).__name__})")
+            items = info["items"] if info else []
+            media = {}
+            for it in items:
+                media[it["kind"]] = media.get(it["kind"], 0) + 1
+            embedded = len(items)
 
-            print(f"\nRESULT: text read from OneNote's frame ({name or host}): {len(text)} characters.")
-            print("It includes OneNote's own menus as well as the page; collect.py will trim those.")
-            if media:
-                found = ", ".join(f"{k}: {v}" for k, v in media.items() if v) or "none"
-                print(f"Large embedded items on the page (at least {MIN_SIDE}px): {found}")
-            print("Completeness: UNVERIFIED. ", end="")
-            if embedded:
-                print(f"The page has {embedded} embedded item(s) whose content isn't in the text. "
-                      "Those need the vision model or a visual check.")
+            area = info.get("area") if info else None
+            print(f"\nRESULT: text read from OneNote's frame ({name or host}): {len(text)} characters in the whole frame.")
+            if area:
+                print(f"Submission area found: <{area['tag']}> {area['id'] or '-'} / {area['cls'] or '-'}: "
+                      f"{len(area['text'])} characters (menus and navigation left out).")
             else:
-                print("No large images or canvases were found, but handwriting (ink) may not show up as a "
-                      "separate element, so compare the text with the page by eye.")
+                print("Submission area not found, so the text below is the whole frame, including OneNote's menus.")
+            found = ", ".join(f"{k}: {v}" for k, v in media.items()) or "none"
+            print(f"Non-text elements in the whole frame (at least {MIN_SIDE}px): {found}")
+            if items:
+                print("  kind      size        position (x, y)   label / source")
+                for it in items:
+                    print(f"  {it['kind']:9} {it['w']:>4}x{it['h']:<6} ({it['x']:>5}, {it['y']:>6})   "
+                          f"{it['label'] or '-'} / {it['src'] or '-'}")
+            if info and info["chains"]:
+                for n, chain in enumerate(info["chains"], 1):
+                    print(f"\nContainers around the page title (match {n}), innermost first:")
+                    print("  level tag      chars  items  id / class / role")
+                    for lvl, c in enumerate(chain):
+                        print(f"  {lvl:>5} {c['tag']:8} {c['chars']:>6} {c['media']:>6}  "
+                              f"{c['id'] or '-'} / {c['cls'] or '-'} / {c['role'] or '-'}")
+
+            checked = area["items"] if area else items
+            where = "in the submission area" if area else "in the frame (some may be OneNote's own)"
+            print("\nCompleteness: UNVERIFIED. ", end="")
+            if checked:
+                kinds = {}
+                for it in checked:
+                    kinds[it["kind"]] = kinds.get(it["kind"], 0) + 1
+                print(f"Potential non-text elements detected {where}: "
+                      + ", ".join(f"{k}: {v}" for k, v in kinds.items())
+                      + ". Inspect their location and purpose before assuming the text is all the work.")
+            else:
+                print(f"No potential non-text elements detected {where}, but handwriting (ink) may not show up "
+                      "as a separate element, so compare the text with the page by eye, including below the "
+                      "visible area.")
+            body = area["text"] if area else text
             print()
-            print(text if args.full else text[:800] + ("\n… (use --full for the rest)" if len(text) > 800 else ""))
+            print(body if args.full else body[:800] + ("\n… (use --full for the rest)" if len(body) > 800 else ""))
+            embedded = len(checked)
             if sys.stdin.isatty():
                 input("\nCompare the text above with the page in the Chrome window, then press Return to close it… ")
             return 4 if embedded else 0

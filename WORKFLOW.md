@@ -208,8 +208,12 @@ instead:
    instead: student section → Homework → the page by title.
 
 Page titles don't always match the instructions. Task 2 asked for a page
-named "Stage 2 – Define & Ideate", but the test student's page was titled
-"Task 2". Phase A should match by date and content, not only by title.
+named "Stage 2 – Define & Ideate", but one student's page was titled "Task 2"
+and another's "Stage 2". Page dates don't help either: pages copied from a
+template keep the template's date (a 2026 submission page showed April 18,
+2022). Phase A should match by content, not by title or date. Distributed
+pages also hold the task's wording with the student's answers in between, so
+collection has to set the task wording aside.
 
 ## Build-strategy decision: browser automation first, scripts where it's safe
 
@@ -370,9 +374,11 @@ using the trace IDs above if Shingo wants the faster path back.
 ## What to build next
 
 **Revised build order (2026-10-31, after an outside review of the plan):**
-1. **Prove read access and extraction quality** with `tools/spike_onenote_text.py` (written; **not yet run
-   against a real OneNote page**), on several kinds of page: typed text only, handwriting (ink), a pasted image, and more than one text box. It reports
-   completeness as unverified and lists the embedded items it found.
+1. **Prove read access and extraction quality** with `tools/spike_onenote_text.py`. **Typed page passed
+   (2026-10-31):** sign-in worked, the script read OneNote's page container (menus left out), and Shingo
+   confirmed every answer was there, in order, to the bottom. Still to test: handwriting (ink), a pasted
+   image, and more than one text box. The script reports completeness as unverified and lists any non-text
+   elements in the page.
 2. **Define the data contracts** in `ARCHITECTURE.md`: the manifest (atomic writes, keyed by Course Hub
    student ID), the name mapping for Teams, MySchool and the notebook, collection outcomes, the approval
    record and per-destination posting states.
@@ -383,6 +389,22 @@ using the trace IDs above if Shingo wants the faster path back.
 6. **Verify one real Teams return and one MySchool save** by reading them back, then test an interrupted
    run and a retry.
 7. **Add app buttons** once those operations are dependable.
+
+**Assignment record plan (2026-10-31).** The saved assignment record is the centre (see `ARCHITECTURE.md`,
+"Assignment records"). Order:
+1. Save and reopen assignments locally. **Done 2026-10-31.**
+2. Design step with a Teams-ready preview and copy actions. **Done 2026-10-31.**
+3. Read-only Teams picker ("Choose from Teams…") through the local Chrome worker. Until then the dialog reads
+   pasted Student view text.
+4. Wire the field buttons to the selected Teams assignment.
+5. "Create draft in Teams" through the browser worker; publishing stays a separate, explicit action.
+6. Refresh with change detection, and link the record to collection, the manifest and approval.
+
+First milestone: choose an existing Teams assignment → import → confirm the Course Hub match → save → reopen with the
+same instructions and criteria ready for feedback. This works today with the pasted Student view; step 3 makes the
+choosing a real pick.
+
+**Posting approach (Shingo, 2026-10-31): assisted now, automate next.** The workspace's Export & posting step opens Teams and MySchool and copies each reviewed student's approved text; Shingo pastes and submits. Automation follows in stages: a read-only Teams/MySchool test, a dry run that fills but doesn't submit, one verified real post with Shingo watching, then batches.
 
 **Next milestone:** one complete, traceable student record, from captured work through approved feedback to
 values read back from Teams and MySchool. The numbered list below is the earlier punch list, kept for its
