@@ -404,6 +404,8 @@ First milestone: choose an existing Teams assignment → import → confirm the 
 same instructions and criteria ready for feedback. This works today with the pasted Student view; step 3 makes the
 choosing a real pick.
 
+**Next after the assignment records (2026-10-31): persistent sessions, then the job queue.** Persistent sessions are built (see `ARCHITECTURE.md`, "Assessment sessions"): work, drafts, levels, notes, comments, review marks and posting ticks survive closing the page. Still to do, in this order: a durable job queue with a background worker (progress, cancellation, recovery after a restart), then the read-only Teams picker and collection.
+
 **Posting approach (Shingo, 2026-10-31): assisted now, automate next.** The workspace's Export & posting step opens Teams and MySchool and copies each reviewed student's approved text; Shingo pastes and submits. Automation follows in stages: a read-only Teams/MySchool test, a dry run that fills but doesn't submit, one verified real post with Shingo watching, then batches.
 
 **Next milestone:** one complete, traceable student record, from captured work through approved feedback to

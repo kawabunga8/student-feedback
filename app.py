@@ -291,6 +291,186 @@ def save_class_mapping(p):
 
 
 ASSESSMENT = Path.home() / "Desktop" / "Teaching" / "Assessment"   # Assessment/<year>/<quarter>/<course>/<assignment>/FirstName_LastName.txt
+SESSION_INDEX = APP_DATA / "session-index.json"        # assignment id -> its folder under Assessment (bookkeeping only)
+SESSION_TEXT = ("student_id", "name", "orig", "grade", "work", "notes", "level", "feedback", "myschool_comment", "basis")
+_FS_BAD = re.compile(r'[\x00-\x1f/\\:*?"<>|]')
+
+
+def _folder_part(value, fallback):
+    s = re.sub(r"\s+", " ", _FS_BAD.sub(" ", str(value or ""))).strip(" .")[:80]
+    return s or fallback
+
+
+def session_folder(aid, rec):
+    """The assignment's folder under Assessment, fixed the first time a session is saved (so renaming the assignment
+    later never strands the work). Always inside Assessment."""
+    index = _read_json(SESSION_INDEX, {})
+    rel = index.get(aid)
+    if not rel:
+        course = rec.get("course") or {}
+        rel = "/".join([_folder_part(course.get("schoolYear"), "unsorted"), _folder_part(rec.get("term"), "no term"),
+                        _folder_part(course.get("label") or course.get("name"), "no course"), _folder_part(rec.get("title"), aid)])
+        taken = {v.lower() for k, v in index.items() if k != aid}
+
+        def other_owner(r):      # another assignment already uses this folder (by index, or by the manifest inside it)
+            m = _read_json(ASSESSMENT / r / "manifest.json", None)
+            return r.lower() in taken or (isinstance(m, dict) and (m.get("assignment") or {}).get("id") not in (None, aid))
+        base, n = rel, 1
+        while other_owner(rel):  # two assignments with the same name, course and term must never share a manifest
+            n += 1
+            rel = f"{base} ({n})"
+    root = ASSESSMENT.resolve()
+    d = (root / rel).resolve()
+    if d == root or not d.is_relative_to(root):
+        raise ValueError("bad session folder")
+    return rel, d
+
+
+def load_session(aid):
+    """The saved assessment session for an assignment: {path, session} (session is None if there isn't one yet)."""
+    rec = load_assignment_record(aid)
+    rel, d = session_folder(aid, rec)
+    s = _read_json(d / "manifest.json", None)
+    s = s if isinstance(s, dict) else None
+    return {"path": rel, "session": s, "status": session_status(s, rec) if s else None}
+
+
+def _clean_snapshot(x):
+    """An approval or posting tick: {bound, at}. `bound` is the exact reviewed values as JSON, kept so that
+    whether the record is still approved is worked out from the stored fields every time it is opened."""
+    if isinstance(x, dict) and isinstance(x.get("bound"), str) and len(x["bound"]) <= 400_000:
+        return {"bound": x["bound"], "at": str(x.get("at") or x.get("reviewed_at") or "")[:40]}
+    return None
+
+
+def _clean_student(s):
+    if not isinstance(s, dict):
+        return None
+    st = {k: str(s.get(k) or "")[:200_000] for k in SESSION_TEXT}
+    if not (st["name"].strip() or st["work"].strip() or st["feedback"].strip()):
+        return None
+    st["approval"] = _clean_snapshot(s.get("approval"))
+    post = s.get("posting") if isinstance(s.get("posting"), dict) else {}
+    st["posting"] = {k: _clean_snapshot(post.get(k)) for k in ("teams", "myschool")}
+    return st
+
+
+AUTOMATED_POSTING = False   # No worker posts to Teams or MySchool. Any future worker must check this AND use approved_for_posting().
+FOCUS_HEAD = "Teacher's feedback focus (not shown to students):"   # same text as ui/assignment.js
+
+
+def compose_rubric(instructions, focus):
+    """What Setup's instructions box holds for a saved assignment (mirrors composeRubric in ui/assignment.js)."""
+    instructions = (instructions or "").strip()
+    focus = [f.strip() for f in (focus or []) if isinstance(f, str) and f.strip()]
+    if not focus:
+        return instructions
+    return (instructions + "\n\n" if instructions else "") + FOCUS_HEAD + "\nMust include:\n" + "\n".join("- " + f for f in focus)
+
+
+def check_reviewed(bound, st, rec, stamp):
+    """Is a review approval (or a posting tick) still valid? Judged by the server alone, from what is stored now:
+    the student's saved values and the saved assignment record. `bound` is the exact reviewed values the page saved
+    with it. `stamp` is {assignment_version, first_seen}, set by the server when it first saw this approval.
+    Returns {current, reasons}; never stored as a yes/no."""
+    try:
+        b = json.loads(bound)
+    except (TypeError, ValueError):
+        b = None
+    if not isinstance(b, dict):
+        return {"current": False, "reasons": ["unreadable approval"]}
+    course = rec.get("course") or {}
+    want = {k: st.get(k, "") for k in ("student_id", "name", "work", "notes", "level", "feedback", "myschool_comment")}
+    want.update(grade=st.get("grade") or rec.get("grade", ""), assignment=rec.get("title", ""),
+                course=course.get("label", ""), school_year=course.get("schoolYear", ""), quarter=rec.get("term", ""))
+    reasons = [k for k, v in want.items() if b.get(k) != v]
+    if str(b.get("instructions", "")).strip() != compose_rubric(rec.get("instructions"), rec.get("focus")):
+        reasons.append("instructions")
+    labels = [x.get("label") for x in (b.get("standards") or []) if isinstance(x, dict)]
+    if labels != list(rec.get("standards") or []):
+        reasons.append("standards")
+    since = int((stamp or {}).get("assignment_version") or 0)
+    if any(h.get("version", 0) > since and h.get("kind") in ("content", "title") for h in (rec.get("history") or [])):
+        reasons.append("assignment changed since approval")
+    return {"current": not reasons, "reasons": reasons}
+
+
+def session_status(session, rec):
+    """Server-side validity of every approval and posting tick in a session, worked out fresh from the stored values."""
+    out, approved = [], 0
+    for st in session.get("students", []):
+        one = {"student_id": st.get("student_id", ""), "approval": None, "posting": {}}
+        ap = st.get("approval")
+        if ap:
+            one["approval"] = check_reviewed(ap["bound"], st, rec, ap.get("stamp"))
+            approved += one["approval"]["current"]
+        for k, t in (st.get("posting") or {}).items():
+            if t:
+                one["posting"][k] = check_reviewed(t["bound"], st, rec, t.get("stamp"))
+        out.append(one)
+    return {"students": out, "approved": approved, "assignment_version": rec.get("version", 0)}
+
+
+def approved_for_posting(aid):
+    """The only way a posting worker may read what to post: students whose approval the server finds current, with the
+    approved values and which destinations are already ticked. Raises unless AUTOMATED_POSTING has been switched on."""
+    if not AUTOMATED_POSTING:
+        raise PermissionError("Automated posting is disabled.")
+    rec = load_assignment_record(aid)
+    _, d = session_folder(aid, rec)
+    session = _read_json(d / "manifest.json", None)
+    if not isinstance(session, dict):
+        return []
+    status = session_status(session, rec)["students"]
+    return [{"student_id": st["student_id"], "name": st["name"], "level": st["level"], "feedback": st["feedback"],
+             "myschool_comment": st["myschool_comment"],
+             "ticked": {k: bool(t and status[i]["posting"].get(k, {}).get("current")) for k, t in st["posting"].items()}}
+            for i, st in enumerate(session.get("students", [])) if status[i]["approval"] and status[i]["approval"]["current"]]
+
+
+class SessionConflict(Exception):
+    def __init__(self, current):
+        super().__init__("session saved elsewhere")
+        self.current = current
+
+
+def save_session(aid, students, base_version):
+    """Save the whole session (student work, drafts, levels, notes, comments, review approvals, posting ticks) to
+    manifest.json in the assignment's Assessment folder. Atomic, and refused if it was saved elsewhere since this
+    page loaded it (base_version)."""
+    if not isinstance(students, list) or len(students) > 400:
+        raise ValueError("students must be a list of at most 400")
+    with _save_lock:
+        rec = load_assignment_record(aid)
+        rel, d = session_folder(aid, rec)
+        old = _read_json(d / "manifest.json", None)
+        old = old if isinstance(old, dict) else None
+        if old and (old.get("assignment") or {}).get("id") not in (None, aid):
+            raise ValueError("this folder holds another assignment's session")
+        if base_version != (old or {}).get("version"):
+            raise SessionConflict(old or {"version": 0})
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        before = {(o.get("student_id") or o.get("name")): o for o in (old or {}).get("students", [])}
+        students = [c for c in map(_clean_student, students) if c]
+        for st in students:     # stamp each approval and tick with the assignment version the server first saw it at
+            was = before.get(st["student_id"] or st["name"]) or {}
+            for holder, prior in ((st, was), (st["posting"], was.get("posting") or {})):
+                for key in (("approval",) if holder is st else ("teams", "myschool")):
+                    snap, old_snap = holder.get(key), (prior or {}).get(key)
+                    if snap:
+                        same = old_snap and old_snap.get("bound") == snap["bound"] and old_snap.get("at") == snap["at"]   # a fresh mark has a new time
+                        snap["stamp"] = old_snap["stamp"] if same and old_snap.get("stamp") else {"assignment_version": rec.get("version", 0), "first_seen": now}
+        session = {"format": 1, "assignment": {"id": aid, "title": rec.get("title", ""), "version": rec.get("version", 0)},
+                   "students": students, "version": (old or {}).get("version", 0) + 1,
+                   "created": (old or {}).get("created", now), "updated": now}
+        _atomic_write_json(d / "manifest.json", session)
+        idx = _read_json(SESSION_INDEX, {})
+        if idx.get(aid) != rel:
+            idx[aid] = rel
+            _atomic_write_json(SESSION_INDEX, idx)
+        return {"path": rel, "session": session, "status": session_status(session, rec)}
+
+
 SECTION_SUFFIX = re.compile(r"_(?:homework|handouts)$", re.I)
 
 
@@ -1042,6 +1222,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"error": "Assignment not found."})
         elif self.path == "/api/class-map":
             self._send(200, {"map": _read_json(CLASS_MAP, {})})
+        elif self.path.startswith("/api/session?"):
+            try:
+                aid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("assignment", [""])[0]
+                self._send(200, load_session(aid))
+            except (ValueError, FileNotFoundError):
+                self._send(200, {"error": "Assignment not found."})
+            except OSError as e:
+                self._send(200, {"error": f"Can't read the saved session: {e.strerror or e}"})
         elif self.path == "/api/standards":
             docs = load_standards()
             self._send(200, {d: [{"id": x["id"], "label": x["label"]} for x in v] for d, v in docs.items()})
@@ -1091,7 +1279,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"students": [{"name": a, "work": b} for a, b in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
-        if self.path in ("/api/assignments", "/api/class-map"):
+        if self.path in ("/api/assignments", "/api/class-map", "/api/session"):
             # Saving needs a JSON request from this app's own page: another website can't send one without the
             # browser asking first (a preflight this server never approves), and a stated Origin must be this app.
             origin = self.headers.get("Origin")
@@ -1100,7 +1288,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, {"error": "forbidden"})
             try:
                 n = int(self.headers.get("Content-Length", 0))
-                if n > 500_000:
+                if n > (20_000_000 if self.path == "/api/session" else 500_000):
                     raise ValueError("too large")
                 body = json.loads(self.rfile.read(n))
                 if self.path == "/api/assignments":
@@ -1108,6 +1296,12 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, {"assignment": save_assignment_record(body.get("assignment") or {}, body.get("baseVersion"))})
                     except VersionConflict as c:
                         return self._send(409, {"error": "This assignment was saved somewhere else after this page opened it.",
+                                                "conflict": True, "current": c.current})
+                if self.path == "/api/session":
+                    try:
+                        return self._send(200, save_session(str(body.get("assignment", "")), body.get("students"), body.get("baseVersion")))
+                    except SessionConflict as c:
+                        return self._send(409, {"error": "This session was saved somewhere else after this page opened it.",
                                                 "conflict": True, "current": c.current})
                 return self._send(200, {"map": save_class_mapping(body)})
             except Exception as e:

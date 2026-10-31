@@ -22,6 +22,7 @@ is today and, under "Target", how it moves toward that goal.
 | Prompt guard: student work is evidence, not instructions | Implemented 2026-10-31 |
 | Teacher workspace (`ui/workspace.js`, `ui/workspace.css`): Design assignment, Setup, Collect, Draft & review, Export & posting; review marks that any later edit voids; reviewed JSON snapshot; **assisted posting** (open Teams/MySchool, copy the approved feedback, comment and level code, tick when done; edits after posting are flagged) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. Not saved automatically (export before closing); the snapshot is not posting authorization; automated collection and posting not connected |
 | Saved assignment records, Design step and Choose from Teams (`ui/assignment.js`; `/api/assignments`, `/api/class-map`) | Implemented 2026-10-31 (steps 1 and 2 of the assignment-record plan); checked in a browser with synthetic data. Choose from Teams reads pasted Student view text for now; the read-only picker, Create draft in Teams, and refresh with change detection are not built |
+| Persistent assessment sessions (`manifest.json` in the assignment's Assessment folder; `/api/session`) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. A first, smaller version of the manifest: no collection outcomes, captures or name mapping yet |
 | Engine switch (Ollama / LM Studio) | Implemented; tested against stand-in servers only. Ollama is the only engine installed |
 | `stage_submissions.py` | Implemented (built from the other Claude account); not run in the 2026-10-30/31 sessions |
 | Teams and MySchool click-paths | Mapped by hand; the posting actions (Teams Return, MySchool save) are **not yet verified** |
@@ -116,6 +117,8 @@ from using DNS rebinding to read class lists.
 | GET | `/api/assignments/<id>` | One saved assignment record |
 | POST | `/api/assignments` | Save a new version of an assignment record (JSON only, from the app's page) |
 | GET, POST | `/api/class-map` | Confirmed Teams class to Course Hub offering matches, per school year |
+| GET | `/api/session?assignment=` | The saved session for an assignment (its students and where it is stored) |
+| POST | `/api/session` | Save the session (JSON only, from the app's page; refused if saved elsewhere since it was loaded) |
 | POST | `/api/parse` | Split uploaded files into one entry per student |
 | POST | `/api/load` | Load one Assessment folder |
 | POST | `/api/generate` | Draft feedback for one student |
@@ -286,6 +289,43 @@ approval read the same record. Records hold no student data.
 
 Not built yet: the read-only Teams picker, wiring the field buttons to it, Create draft in Teams, and refresh with
 change detection linked to the manifest, collection and approval (steps 3 to 6 in `WORKFLOW.md`).
+
+## Assessment sessions (built 2026-10-31)
+
+Reopening an assignment reopens its work. The page saves automatically, a couple of seconds after each change, to
+`manifest.json` in the assignment's folder under Assessment (`Assessment/<school year>/<term>/<course>/<assignment>/`,
+outside git; `manifest.json` is already in `.gitignore`). The folder is worked out from the saved assignment record the
+first time and then fixed in `~/Library/Application Support/student-feedback/session-index.json`, so renaming the
+assignment later doesn't strand the work. It is always inside Assessment (names are cleaned; `..` and absolute paths
+can't escape). Two assignments with the same name, course and term never share a manifest: the second gets " (2)". An assignment with no students gets no manifest.
+
+- **Saved per student** (in page order): Course Hub ID, name as shown and as uploaded, grade, work, private notes, level,
+  the feedback text as edited, the separate MySchool comment, the instructions-and-standards basis the draft was written
+  against, the review approval, and the Teams and MySchool "done" ticks.
+- **Approvals and ticks keep what was reviewed, and the server judges them.** An approval is saved with the exact values
+  that were reviewed. Whenever a session is saved or loaded, the server works out again, from the stored values and the
+  *saved* assignment record, whether each approval and each posting tick still holds. It is never a stored yes/no. An
+  approval is current only if the reviewed values equal the student's stored values (ID, name, work, notes, level,
+  feedback, MySchool comment, grade) and the saved assignment's title, instructions plus feedback focus, course, school
+  year, term and standards; and the assignment has had no content or title change since the server first saw the
+  approval (the server stamps it with the assignment version then; a fresh review mark counts as a new approval).
+  Otherwise the status lists the reasons ("feedback", "instructions", "assignment changed since approval", …). Editing
+  anything reviewed, or saving the assignment with different instructions, voids it; changes that don't touch what was
+  reviewed (feedback length, notes for marking) don't. The page shows the same result as "review again", and warns when a
+  student is reviewed on the page but not approved on the server (for example, reviewed against unsaved instructions).
+  `department` is part of the page's reviewed values but isn't re-derived on the server.
+- **A gated reader for future posting workers.** `approved_for_posting(assignment_id)` returns only students the server finds
+  approved, with their approved values and which destinations are already ticked. It raises unless `AUTOMATED_POSTING` is
+  switched on, and it is **off**: no worker posts anything, and no HTTP route exposes the reader.
+- **Two tabs:** each save names the session version the page loaded. If it was saved elsewhere since, nothing is written;
+  the page keeps its work and offers "Load the saved session" or "Save mine on top". Autosave stays off for a session
+  that couldn't be read, so it can't overwrite one it never saw.
+- **Switching assignments** saves the current session first, then opens the other one's students; a new assignment starts
+  with no students.
+
+Not built: collection outcomes, the original captures, the class name mapping, destination read-back and run records (the
+rest of the manifest described below), and a separate approval file. The approval is the teacher's own mark, kept with the
+session and validated by the server as above.
 
 ## Data contracts (decided 2026-10-31; not built yet)
 

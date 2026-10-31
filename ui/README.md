@@ -80,3 +80,27 @@ and non-JSON saves, and no sideways scrolling at phone width.
 the meantime, nothing is written: the bar says so and offers **Load version N** (drops the edits on this page) or
 **Save mine as version N+1**. Checked with two tabs: the second save refused and the file unchanged, then both choices. Not exercised: live Course Hub, real Teams text (the
 sample was modelled on the Student view), and Safari's clipboard prompt.
+
+## Saved sessions (2026-10-31)
+
+Student work no longer disappears when the page closes. Once the assignment is saved, the assignment bar shows
+"Session saved …" and the folder under Assessment it is stored in. Reopening the assignment (or the page, which reopens
+the last assignment) brings back each student's work, feedback as edited, level, private notes, MySchool comment,
+review mark and posting ticks. A change to anything reviewed, or to the assignment's instructions or standards, voids
+the review mark as before. Students typed in before the assignment is first saved are kept when you save it. If a
+second tab saved the session first, nothing is overwritten: choose **Load the saved session** or **Save mine on top**.
+"New assignment" clears the students; the saved session stays.
+
+Checked in Chromium with synthetic students and a stand-in model (39 session checks, plus the 65 earlier checks):
+save and reopen, an edit voiding a review mark and staying void after reopening, the posting tick showing as changed,
+instruction changes voiding review, two tabs, switching assignments, folder names that try to leave the Assessment
+folder, and refused cross-origin and non-JSON saves. Not exercised: the real Assessment folder and macOS file
+permissions, live Course Hub class lists, and very large classes.
+
+Server-side approvals: the server, not only the page, decides whether a review mark still holds (see `ARCHITECTURE.md`,
+"Assessment sessions"). If a student is reviewed on the page but not approved on the server (for example you reviewed
+against instructions you hadn't saved yet), the session line says so and what to do: save the assignment, or mark them
+reviewed again. Checked with 31 further checks: each stored value changed under an unchanged approval, forged and
+unreadable approvals, instruction, title, standards and focus changes, a change that shouldn't void anything, re-approval
+stamping, posting ticks, and the gated posting reader. `check_session_folder.py` (in the repo root) tests that macOS lets
+the app save into your real Assessment folder.

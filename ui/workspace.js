@@ -219,5 +219,7 @@
   document.getElementById('go').addEventListener('click',() => { window.feedbackStopRequested = false; select(3); });
   const notice = make('p','hint','Student work and review marks stay in this page until you export. Reloading loses them.'); review.prepend(notice);
   window.addEventListener('beforeunload',e=>{ if(cards().some(c=>c.querySelector('.work').value.trim())) { e.preventDefault(); e.returnValue=''; } });
+  // Lets the session saver (assignment.js) read and restore this page's state.
+  window.feedbackWorkspace = {cards, payload, valid, approvals, posted, draftBasis, basisNow, refresh};
   setInterval(refresh,1000); select(1); refresh();
 })();

@@ -138,6 +138,7 @@
   pick.onchange = async () => {
     const id = pick.value;
     if(dirty() && !confirm('Discard the unsaved changes to "' + ($('#atitle').value.trim() || 'this assignment') + '"?')) { pick.value = record ? record.id : ''; return; }
+    await flushSession();
     if(!id) { newAssignment(); return; }
     let d; try { d = await getJSON('/api/assignments/' + encodeURIComponent(id)); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
     if(d.error) { setNote(d.error, true); pick.value = record ? record.id : ''; return; }
@@ -150,7 +151,9 @@
     let d; try { d = await postJSON('/api/assignments', {assignment:rec, baseVersion:record ? record.version : null}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
     if(d.conflict && d.current) { showConflict(d.current); await refreshList(); return null; }
     if(d.error) { setNote('Not saved: ' + d.error, true); return null; }
+    const firstSave = !record;
     record = d.assignment; savedCore = core(); keep.set('last-assignment', record.id);
+    if(sess.aid !== record.id) await attachSession(firstSave); else refreshStatus();
     const last = (record.history || []).slice(-1)[0] || {}, unsynced = designOutOfSync();
     setNote(record.version === before ? 'Nothing had changed since the last save.' :
       (last.kind === 'created' ? 'Saved on this laptop as version 1.' :
@@ -189,9 +192,11 @@
     if(missing.length) notes.push(missing.length + (missing.length === 1 ? ' saved standard isn’t' : ' saved standards aren’t') + ' in the current standards list.');
     savedCore = core(); keep.set('last-assignment', rec.id); pick.value = rec.id;
     renderDesign(); renderSources(); setNote(notes.join(' '), notes.length > 0); updateBar();
+    await attachSession(false);
   }
   function newAssignment() {
     record = null; design = emptyDesign(); sources = {}; teams = null; savedCore = null;
+    Object.assign(sess, {aid:'', version:null, path:'', sig:'', hold:false, loaded:false, err:''}); sessNote.replaceChildren(); clearCards();
     setField('#atitle', ''); setField('#rubric', ''); setStandards([]);
     keep.set('last-assignment', ''); pick.value = '';
     renderDesign(); renderSources(); setNote('New assignment. Course, grade and term are kept from before: change them if needed.'); updateBar();
@@ -615,6 +620,110 @@
   }
   function renderDesign() { refreshers.forEach(f => f()); syncMirrors(); renderCriteria(); changed(); }
   $$('nav.steps .step')[0].addEventListener('click', () => { syncMirrors(); renderCriteria(); changed(); });
+
+  // ------------------------------------------------------------------ assessment session (saved automatically)
+  // Student work, drafts, levels, notes, MySchool comments, review approvals and posting ticks are saved to
+  // manifest.json in the assignment's folder under Assessment (outside git), a couple of seconds after each change.
+  // An approval is saved with the exact values that were reviewed; whether it still holds is worked out again every
+  // time the session is opened, so a change to anything reviewed (or to the assignment's instructions) voids it.
+  const ws = window.feedbackWorkspace;
+  const sess = {aid:'', version:null, path:'', sig:'', hold:false, loaded:false, busy:false, at:'', err:'', status:null};
+  const sessLine = make('div', 'asg-session'); sessLine.setAttribute('role', 'status');
+  barStatus.after(sessLine);
+  const sessNote = make('div', 'sess-note'); sessLine.after(sessNote);
+  function collect() {
+    return ws.cards().map(c => {
+      const out = c.querySelector('.out:not(.err)'), a = ws.approvals.get(c), p = ws.posted.get(c) || {};
+      const tick = x => x ? {bound:x.bound, at:x.at} : null;
+      return {student_id:c.dataset.rid || '', name:c.querySelector('.name').value, orig:c.dataset.orig || '',
+        grade:c.querySelector('.sgrade').value, work:c.querySelector('.work').value, notes:c.querySelector('.notes').value,
+        level:c.querySelector('.level').value, feedback:out ? out.innerText : '',
+        myschool_comment:c.querySelector('.myschool-comment')?.value || '', basis:out ? (ws.draftBasis.get(out) || '') : '',
+        approval:a ? {bound:a.bound, at:a.reviewed_at} : null, posting:{teams:tick(p.teams), myschool:tick(p.myschool)}};
+    }).filter(s => s.name.trim() || s.work.trim() || s.feedback.trim());
+  }
+  function clearCards() { ws.cards().forEach(c => c.remove()); }
+  function restoreStudents(list) {
+    clearCards();
+    const made = list.map(st => {
+      const c = window.addStudent(st.name, st.work);
+      if(st.student_id) c.dataset.rid = st.student_id; if(st.orig) c.dataset.orig = st.orig;
+      if([...c.querySelector('.sgrade').options].some(o => o.value === st.grade)) c.querySelector('.sgrade').value = st.grade;
+      if([...c.querySelector('.level').options].some(o => o.value === st.level)) c.querySelector('.level').value = st.level;
+      c.querySelector('.notes').value = st.notes;
+      if(st.student_id) window.setNote(c, '✓ Restored from the saved session');
+      if(st.feedback) {
+        const out = make('div', 'out', st.feedback.replace(/\*\*/g, '')); out.contentEditable = 'true';
+        const cp = make('button', '', 'Copy'); cp.style.marginTop = '8px';
+        cp.onclick = () => { navigator.clipboard.writeText(out.innerText); cp.textContent = 'Copied'; setTimeout(() => cp.textContent = 'Copy', 1500); };
+        c.querySelector('.result').append(out, cp);
+        ws.draftBasis.set(out, st.basis || ws.basisNow());
+      }
+      return [c, st];
+    });
+    ws.refresh();                                       // creates each card's review controls
+    for(const [c, st] of made) {
+      const box = c.querySelector('.myschool-comment'); if(box) box.value = st.myschool_comment;
+      if(st.approval) ws.approvals.set(c, {bound:st.approval.bound, reviewed_at:st.approval.at});
+      const p = {}; for(const k of ['teams', 'myschool']) if(st.posting && st.posting[k]) p[k] = {bound:st.posting[k].bound, at:st.posting[k].at};
+      if(Object.keys(p).length) ws.posted.set(c, p);
+    }
+    ws.refresh();
+  }
+  async function saveSession() {
+    if(!record || !sess.loaded || sess.busy || sess.hold || sess.aid !== record.id) return;
+    const students = collect(), s = JSON.stringify(students);
+    if(s === sess.sig) return;
+    if(!students.length && sess.version == null) { sess.sig = s; return; }
+    sess.busy = true; let d;
+    try { d = await postJSON('/api/session', {assignment:record.id, baseVersion:sess.version, students}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    sess.busy = false;
+    if(d.conflict) { sess.hold = true; showSessionConflict(d.current); return; }
+    if(d.error) { sess.err = d.error; renderSess(); return; }
+    Object.assign(sess, {version:d.session.version, path:d.path, sig:s, at:d.session.updated, err:'', status:d.status}); renderSess();
+  }
+  // The server judges approvals itself, from the saved session and the saved assignment. Ask again after the assignment is saved.
+  async function refreshStatus() {
+    if(!record || !sess.loaded || sess.aid !== record.id) return;
+    try { const d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); if(!d.error) { sess.status = d.status; renderSess(); } } catch(e) {}
+  }
+  async function flushSession() { for(let i = 0; i < 20 && sess.busy; i++) await sleep(100); await saveSession(); }
+  function showSessionConflict(cur) {
+    sessNote.classList.add('warn');
+    sessNote.replaceChildren('Student work not saved: this session was saved somewhere else (another tab or window?) at ' + when(cur.updated) +
+      '. Your work is still on this page. ',
+      button('Load the saved session (drops the work here)', '', () => { restoreStudents(cur.students || []); Object.assign(sess, {version:cur.version, sig:JSON.stringify(collect()), hold:false}); sessNote.replaceChildren(); renderSess(); }), ' ',
+      button('Save mine on top', '', () => { sess.version = cur.version; sess.hold = false; sess.sig = ''; sessNote.replaceChildren(); saveSession(); }));
+    renderSess();
+  }
+  async function attachSession(fresh) {                 // fresh: a record just created from this page's own students
+    sess.aid = record.id; sess.hold = false; sess.err = ''; sess.loaded = false; sess.version = null; sess.sig = ''; sessNote.replaceChildren();
+    if(fresh) { sess.loaded = true; renderSess(); return; }
+    let d; try { d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(d.error) { sess.err = d.error; renderSess(); return; }     // autosave stays off: it must not overwrite a session it couldn't read
+    sess.path = d.path; sess.status = d.status;
+    if(d.session) { restoreStudents(d.session.students || []); Object.assign(sess, {version:d.session.version, at:d.session.updated}); } else clearCards();
+    sess.sig = JSON.stringify(collect()); sess.loaded = true; ws.refresh(); renderSess();
+  }
+  function trustNote() {                               // reviewed on this page, but not counted by the server (yet)
+    if(JSON.stringify(collect()) !== sess.sig) return '';
+    const local = ws.cards().filter(c => ws.valid(c)).length, server = sess.status ? sess.status.approved : 0;
+    return local > server ? ' · ' + (local - server) + ' reviewed ' + (local - server === 1 ? 'student isn’t' : 'students aren’t') +
+      ' approved on the server' + (dirty() ? ': save the assignment' : ': mark them reviewed again') : '';
+  }
+  function renderSess() {
+    const n = ws.cards().length;
+    const text = !record ? (n ? 'Student work is not saved between sessions until you save the assignment.' : '')
+      : sess.err ? 'Session not saved: ' + sess.err
+      : !sess.loaded ? 'Opening the saved session…'
+      : sess.hold ? 'Session not saved: see below.'
+      : sess.version == null ? (n ? 'Session: saving shortly…' : 'No student work yet.')
+      : (JSON.stringify(collect()) !== sess.sig ? 'Session: saving…' : 'Session saved ' + when(sess.at)) + ' · Assessment › ' + sess.path.split('/').join(' › ') + trustNote();
+    if(sessLine.textContent !== text) sessLine.textContent = text;
+    sessLine.classList.toggle('warn', !!(sess.err || sess.hold));
+  }
+  setInterval(() => { saveSession().then(renderSess); }, 2000);
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') saveSession(); });
 
   // ------------------------------------------------------------------ keep everything current, and start
   const main = $('main');
