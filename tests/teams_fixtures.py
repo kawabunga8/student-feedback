@@ -121,3 +121,29 @@ Turn this doc into flashcards
 
 # Same synthetic page, with Teams' rubric marker after the instructions (the rubric text itself is not on this page).
 SV_RUBRIC = SV.replace("\nPoints", "\nRubric\nView rubric\nPoints", 1)
+
+
+# ---- a synthetic "View rubric" dialog, shaped like the structure the live spike reported (dialog > heading, paragraph +
+# listbox "Criteria for X" > options of "level text" + "descriptor paragraph"). All wording is invented.
+def rubric_dialog_html(criteria=None, title="Sample Design Rubric (Gr 9 Test)"):
+    criteria = criteria if criteria is not None else {
+        "Planning": {"Extending": "Plans ahead and adapts the plan with reasons.", "Proficient": "Makes a clear plan and follows it.",
+                     "Developing": "Makes a plan with some gaps.", "Emerging": "Needs help to make a plan."},
+        "Building": {"Extending": "Builds an excellent sample and improves it.", "Proficient": "Builds a working sample.",
+                     "Developing": "Builds part of the sample.", "Emerging": "Builds with support."}}
+    parts = [f'<h2>{title}</h2>']
+    for name, lv in criteria.items():
+        opts = "".join(f'<div role="option"><span>{k}</span><p>{v}</p></div>' for k, v in lv.items())
+        parts.append(f'<p>{name}</p><div role="listbox" aria-label="Criteria for {name}">{opts}</div>')
+    parts.append('<button>Close</button>')
+    return '<div role="dialog" aria-label="' + title + '">' + "".join(parts) + '</div>'
+
+
+def student_view_page(dialog_html, buttons=1, behaviour="dialog"):
+    """A page with the Student view text and 'View rubric' button(s). behaviour: dialog | nothing | newtab."""
+    onclick = {"dialog": "document.getElementById('slot').innerHTML = window.DIALOG",
+               "nothing": "void 0", "newtab": "window.open('/other')"}[behaviour]
+    btns = "".join(f'<button onclick="{onclick}">View rubric</button>' for _ in range(buttons))
+    import json as _j
+    return ("<html><body><h1>Task A</h1><p>Due Nov 4</p><h2>Instructions</h2><p>Do the thing.</p>" + btns +
+            '<div id="slot"></div><script>window.DIALOG = ' + _j.dumps(dialog_html) + ";</script></body></html>")

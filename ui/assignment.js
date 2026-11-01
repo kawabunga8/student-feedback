@@ -359,7 +359,7 @@
     return startTeams({op:'read', class:x.class_name, title:x.title}, res => {
       const sv = res.student_view, rc = res.roster_counts;
       parsed = {title:sv.title, due:sv.due, instructions:sv.instructions, referenceMaterials:sv.reference_materials || [], team:res.source.teams_class,
-                found:true, how:'read', source:res.source, counts:rc, sections:sv.sections_found, refsRead:!!sv.reference_materials_read, rubricState:rubricStateOf(sv), rubricNote:sv.rubric_note || ''};
+                found:true, how:'read', source:res.source, counts:rc, sections:sv.sections_found, refsRead:!!sv.reference_materials_read, rubricState:rubricStateOf(sv), rubricNote:sv.rubric_note || '', rubric:sv.rubric || null};
       clsIn.value = res.source.teams_class; paste.value = '';
       tmsg.textContent = 'Read “' + sv.title + '” at ' + when(res.read_at) + '. Check the preview below against Teams before using it.';
       render();
@@ -388,7 +388,7 @@
     teams = {...(teams || {}), className:clsIn.value.trim() || (teams && teams.className) || '', importedAt:nowIso()};
     if(parsed) Object.assign(teams, {title:parsed.title, due:parsed.due, referenceMaterials:parsed.referenceMaterials,
                                      imported:{title:parsed.title, instructions:parsed.instructions}},
-                             parsed.how === 'read' ? {source:parsed.source, statusCounts:parsed.counts, referenceMaterialsRead:false, rubricState:parsed.rubricState || 'absent'} : {});
+                             parsed.how === 'read' ? {source:parsed.source, statusCounts:parsed.counts, referenceMaterialsRead:false, rubricState:parsed.rubricState || 'absent', rubric:parsed.rubric || null} : {});
     if(!design.teamsClass && teams.className) { design.teamsClass = teams.className; refreshers.forEach(f => f()); }
     updateBar();
   }
@@ -443,6 +443,23 @@
       button('Use', '', () => { if(!sel.value) { msg.textContent = 'Choose the grade first.'; return; }
         setField('#grade', sel.value); mark('grade', 'Course Hub grades (you chose)'); render(); }));
   }
+  // The rubric as Teams showed it (criteria, then four levels each). Kept apart from the instructions: not merged into them,
+  // not typed into any field. The teacher compares it with Teams.
+  const rubricLines = r => r.criteria.map(c => c.name + '\n' + c.levels.map(l => '  ' + l.level + ': ' + l.descriptor).join('\n')).join('\n\n');
+  function rubricRow(r) {
+    const total = r.criteria.reduce((n, c) => n + c.levels.length, 0);
+    const row_ = row('rubric', 'Rubric', r.title + ' (' + r.criteria.length + ' criteria: ' + r.criteria.map(c => c.name).join(', ') + '; ' + total + ' descriptors)',
+      [hintEl('Read from Teams’ View rubric dialog, exactly as shown. Kept separate from the instructions and not imported into any field.')]);
+    const span = row_.querySelector('.teams-val > span'), short = span.textContent;
+    const tog = make('button', 'linkish', 'Show full rubric'); tog.type = 'button'; tog.setAttribute('aria-expanded', 'false');
+    tog.onclick = () => {
+      const open = tog.getAttribute('aria-expanded') !== 'true';
+      tog.setAttribute('aria-expanded', String(open)); tog.textContent = open ? 'Show less' : 'Show full rubric';
+      span.textContent = open ? short + '\n\n' + rubricLines(r) : short; span.classList.toggle('teams-full', open);
+    };
+    span.after(make('br'), tog);
+    return row_;
+  }
   function render() {
     const rows = [];
     if(parsed) {
@@ -469,6 +486,7 @@
       }
       rows.push(insRow);
     }
+    if(parsed && parsed.how === 'read' && parsed.rubricState === 'read' && parsed.rubric) rows.push(rubricRow(parsed.rubric));
     if(parsed && parsed.how === 'read') {
       const c = parsed.counts || {}, st = c.statuses || {}, total = (c.to_return || 0) + (c.returned || 0);
       rows.push(row('counts', 'Status counts', total ? total + ' students: ' + Object.entries(st).map(([k, v]) => v + ' ' + k.toLowerCase()).join(', ') + (c.returned ? ', ' + c.returned + ' returned' : '') : 'Not read',

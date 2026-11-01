@@ -50,7 +50,7 @@ def fake(op, cls="", title=""):
     if op == "list": return {"ok": True, "op": "list", "read_at": now, "assignments": T.parse_list(LIST), "log": []}
     return {"ok": True, "op": "read", "read_at": now, "source": {"class_id": "11111111-2222-4333-8444-555555555555", "assignment_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
             "url": "https://assignments.example.test/classes/11111111/assignment-review/aaaaaaaa", "teams_class": cls, "list_title": title, "read_at": now},
-            "student_view": {**T.parse_student_view(SV_RUBRIC if mode[0] in ("rubric", "rubric_read") else SV), **({"rubric_read": True} if mode[0] == "rubric_read" else {}), **({"rubric_note": "Teams' page had 1 control(s) and 0 text line(s) mentioning \u201crubric\u201d, but none was exactly \u201cView rubric\u201d: Open grading rubric guide"} if mode[0] == "note" else {})}, "roster_counts": T.parse_roster(roster(list(zip(names, sts)), 6, 6)), "list_row": {}, "log": []}
+            "student_view": {**T.parse_student_view(SV_RUBRIC if mode[0] in ("rubric", "rubric_read") else SV), **({"rubric_read": True, "rubric": T.validate_rubric({"title": "Sample Design Rubric (Gr 9 Test)", "criteria": [{"name": n, "heading": n, "levels": [{"level": l, "descriptor": f"{n} at {l}."} for l in ("Extending", "Proficient", "Developing", "Emerging")]} for n in ("Planning", "Building")]})[0]} if mode[0] == "rubric_read" else {}), **({"rubric_note": "Teams' page had 1 control(s) and 0 text line(s) mentioning \u201crubric\u201d, but none was exactly \u201cView rubric\u201d: Open grading rubric guide"} if mode[0] == "note" else {})}, "roster_counts": T.parse_roster(roster(list(zip(names, sts)), 6, 6)), "list_row": {}, "log": []}
 app.TEAMS_RUNNER = fake
 def call(method, path, body=None, headers=None):
     h = {"Content-Type": "application/json", **(headers or {})}
@@ -170,6 +170,18 @@ with sync_playwright() as p:
     rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
     src_row = next(x for x in rows if x.startswith("Source"))
     check("10d read rubric is reported as read, not as unread or absent", "present and read from Teams" in src_row and "not read" not in src_row.split("Rubric:")[1], src_row[-160:])
+    rr = next(x for x in rows if x.startswith("Rubric"))
+    check("10d2 the rubric has its own row, separate from the instructions, collapsed by default", "Sample Design Rubric" in rr and "2 criteria: Planning, Building; 8 descriptors" in rr and "Planning at Extending" not in rr, rr[:200])
+    ins_row = next(x for x in rows if x.startswith("Instructions"))
+    check("  nothing from the rubric is in the instructions row", "Planning at" not in ins_row and "Sample Design Rubric" not in ins_row)
+    pg.locator(".teams-row[data-key=rubric] button[aria-expanded]").click()
+    full = pg.inner_text(".teams-row[data-key=rubric] .teams-val > span")
+    check("  expanded: every criterion with its four levels in Teams' order", full.index("Planning at Extending") < full.index("Planning at Proficient") < full.index("Planning at Developing") < full.index("Planning at Emerging") < full.index("Building at Extending") < full.index("Building at Proficient") < full.index("Building at Developing") < full.index("Building at Emerging") and full.count(" at ") == 8, full[:160])
+    check("  the Setup fields were not changed by reading the rubric", "Planning at" not in pg.input_value("#rubric") and "Planning at" not in pg.input_value("#atitle"))
+    if pg.locator("text=Confirm match").count(): pg.click("text=Confirm match"); time.sleep(0.5)
+    pg.click(".teams-all"); time.sleep(0.5); pg.click(".teams-save"); time.sleep(1)
+    t3 = json.load(open(os.path.join(adir, os.listdir(adir)[0])))["teams"]
+    check("10d3 saved record keeps the rubric as read, apart from the instructions", t3.get("rubricState") == "read" and len(t3.get("rubric", {}).get("criteria", [])) == 2 and "Planning at" not in json.dumps(json.load(open(os.path.join(adir, os.listdir(adir)[0])))["instructions"]), str(t3.get("rubricState")))
     # the reader's diagnostic note is shown when it saw something rubric-like that wasn't the marker
     mode[0] = "note"; pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
     n0 = len(calls); pg.click(".teams-list-btn")

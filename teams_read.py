@@ -77,6 +77,44 @@ def parse_list(text):
 STATUS_KNOWN = ("Viewed", "Turned in", "Not turned in", "Returned", "Returned for revision", "Excused", "Not viewed")
 
 
+RUBRIC_LEVELS = ("Emerging", "Developing", "Proficient", "Extending")
+
+
+def validate_rubric(raw):
+    """Check the structure pulled from the View rubric dialog. Returns (rubric, note): the rubric when every criterion has
+    exactly the four expected levels, each with its own descriptor, otherwise (None, why). Nothing is repaired or guessed:
+    a rubric that doesn't fit stays 'present, not read'. Descriptors are kept exactly as Teams showed them."""
+    try:
+        title = re.sub(r"\s+", " ", (raw.get("title") or "")).strip()
+        crits = raw.get("criteria") or []
+    except AttributeError:
+        return None, "the rubric dialog gave no structure"
+    if not title:
+        return None, "the rubric dialog had no title"
+    if not crits:
+        return None, "the rubric dialog had no criteria lists"
+    out, seen = [], set()
+    for c in crits:
+        name = re.sub(r"\s+", " ", c.get("name") or "").strip()
+        if not name or name.lower() in seen:
+            return None, "a criterion had no name or a repeated name"
+        seen.add(name.lower())
+        lead = re.sub(r"\s+", " ", c.get("heading") or "").strip()
+        if lead and lead != name:
+            return None, f"criterion '{name}' didn't match the heading above it ('{lead[:40]}')"
+        levels = []
+        for o in c.get("levels") or []:
+            lv, d = re.sub(r"\s+", " ", o.get("level") or "").strip(), (o.get("descriptor") or "").strip()
+            if not lv or not d:
+                return None, f"criterion '{name}' had a level without a name or without a descriptor"
+            levels.append({"level": lv, "descriptor": d})
+        got = sorted(x["level"].lower() for x in levels)
+        if got != sorted(l.lower() for l in RUBRIC_LEVELS):
+            return None, f"criterion '{name}' has levels {[x['level'] for x in levels]}, not the expected four ({', '.join(RUBRIC_LEVELS)})"
+        out.append({"name": name, "levels": levels})
+    return {"title": title, "criteria": out, "source": "View rubric dialog"}, ""
+
+
 def apply_rubric_probe(sv, probe):
     """Combine what the page TEXT showed with what the page's CONTROLS showed (a button's name may not be in the text, or may
     load a moment later). Controls named exactly "View rubric" / "Rubric" count as the marker; anything looser is only reported."""
@@ -265,6 +303,7 @@ def _host(url):
 class Session:
     def __init__(self, page, wait):
         self.page, self.wait, self.log = page, wait, []
+        self.rubric_wait = 15          # seconds to wait for the rubric dialog after the one click
 
     def note(self, s):
         self.log.append(f"[{time.time() - self.t0:5.1f}s] {s}")
@@ -301,7 +340,7 @@ class Session:
 
     # ---- the only clicks this reader makes
     def click(self, kind, locator):
-        if kind not in ("rail-assignments", "list-row", "menu-button", "menu-student-view"):
+        if kind not in ("rail-assignments", "list-row", "menu-button", "menu-student-view", "view-rubric"):
             raise ReadError("differs", f"internal: click kind '{kind}' is not allowed")
         locator.click(timeout=5000)
 
@@ -390,6 +429,46 @@ class Session:
         self.note("rubric probe: " + json.dumps(self.rubric_probe)[:300])
         return last or t
 
+    def read_rubric(self):
+        """Open the rubric ('View rubric', exactly one such button, one click) and read its criteria. Never raises for a
+        rubric that doesn't look as expected: returns (rubric or None, note) so the instructions and counts already read are
+        kept and the rubric simply stays 'present, not read'. A new browser tab or a changed assignment address is the
+        exception: that is a real surprise, so it raises and the read stops. The dialog is not closed by clicking: the
+        browser is closed when the read ends."""
+        f = self.frame()
+        btns = f.get_by_role("button", name=re.compile(r"^\s*View rubric\s*$", re.I)).all()
+        if len(btns) != 1:
+            return None, f"expected exactly one 'View rubric' button, found {len(btns)}; nothing was clicked"
+        before_pages, before = len(self.page.context.pages), url_path(f.url)
+        self.click("view-rubric", btns[0])
+        dialog, end = None, time.time() + self.rubric_wait
+        while time.time() < end and dialog is None:
+            self.page.wait_for_timeout(1000)
+            if len(self.page.context.pages) != before_pages:
+                raise ReadError("differs", "View rubric opened a new browser tab, which this reader doesn't expect.")
+            fr = self.frame()
+            if fr is not None and url_path(fr.url) != before:
+                raise ReadError("differs", "Opening the rubric changed the page address, which this reader doesn't expect.")
+            loc = fr.locator('[role="dialog"]') if fr is not None else None
+            if loc is not None and loc.count() and loc.first.locator('[role="listbox"]').count():
+                dialog = loc.first
+        if dialog is None:
+            return None, f"no rubric dialog with criteria lists appeared within {self.rubric_wait} s"
+        raw = dialog.evaluate("""d => {
+            const txt = e => (e && e.textContent || '').trim();
+            const h = d.querySelector('h1,h2,h3,[role=heading]');
+            return {title: txt(h), criteria: [...d.querySelectorAll('[role=listbox]')].map(lb => {
+                const label = lb.getAttribute('aria-label') || '', prev = lb.previousElementSibling;
+                return {name: label.replace(/^Criteria for\\s*/i, ''), heading: prev && prev.tagName !== 'H2' ? txt(prev) : '',
+                        levels: [...lb.querySelectorAll('[role=option]')].map(o => {
+                            const k = [...o.children];
+                            return {level: txt(k[0]), descriptor: k.slice(1).map(txt).filter(Boolean).join('\\n')};
+                        })};
+            })};
+        }""")
+        self.note("rubric dialog read: " + str(len((raw or {}).get("criteria") or [])) + " criteria")
+        return validate_rubric(raw)
+
     def probe_rubric(self):
         """Read-only: which buttons/links on the page have 'rubric' in their name, and which text lines mention it."""
         f = self.frame(); names = []
@@ -457,6 +536,13 @@ def run(op, cls="", title="", wait=120, signin_wait=240):
                 raise ReadError("differs", "The roster and Student view addresses name different assignments; nothing was returned.")
             if not sv["found"] or sv["title"] != want["title"]:
                 raise ReadError("differs", "Student view didn't show the expected title and an Instructions section.")
+            if sv.get("rubric_present"):          # last, so a surprise here can't lose the instructions or counts
+                rubric, why = s.read_rubric()
+                if rubric:
+                    sv["rubric"], sv["rubric_read"] = rubric, True
+                else:
+                    sv["rubric_note"] = (sv.get("rubric_note", "") + " Rubric not read: " + why + ".").strip()
+                    s.note("rubric not read: " + why)
             return {"op": "read", "read_at": now,
                     "source": {**ids, "url": roster_url, "student_view_url": re.sub(r"[?#].*", "", s.frame().url),
                                "teams_class": want["class_name"], "list_title": want["title"], "read_at": now},
