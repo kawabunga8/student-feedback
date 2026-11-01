@@ -117,3 +117,7 @@ Points
 No points
 Turn this doc into flashcards
 """
+
+
+# Same synthetic page, with Teams' rubric marker after the instructions (the rubric text itself is not on this page).
+SV_RUBRIC = SV.replace("\nPoints", "\nRubric\nView rubric\nPoints", 1)

@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def port_free(port):
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)     # a port in TIME_WAIT after a previous run is free; a listener still is not
     try:
         s.bind(("127.0.0.1", port))
         return True

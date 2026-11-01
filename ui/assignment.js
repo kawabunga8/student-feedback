@@ -350,11 +350,16 @@
     }));
     if(!rows.length && tItems.length) tlist.append(make('div', 'hint-inline', 'Nothing matches that filter.'));
   }
+  // Three different facts, never merged: no rubric button in Student view / a rubric is attached but its descriptors weren't read / read.
+  const rubricStateOf = sv => !sv.rubric_present ? 'absent' : sv.rubric_read ? 'read' : 'present_unread';
+  const rubricText = st => st === 'read' ? 'present and read from Teams (kept separate from the instructions).'
+    : st === 'present_unread' ? 'present in Teams (View rubric), not read: its descriptors are not in the instructions and were not imported. Check it in Teams.'
+    : 'no rubric button was shown in Student view; check Teams if you expected one.';
   function readOne(x) {
     return startTeams({op:'read', class:x.class_name, title:x.title}, res => {
       const sv = res.student_view, rc = res.roster_counts;
       parsed = {title:sv.title, due:sv.due, instructions:sv.instructions, referenceMaterials:sv.reference_materials || [], team:res.source.teams_class,
-                found:true, how:'read', source:res.source, counts:rc, sections:sv.sections_found, refsRead:!!sv.reference_materials_read};
+                found:true, how:'read', source:res.source, counts:rc, sections:sv.sections_found, refsRead:!!sv.reference_materials_read, rubricState:rubricStateOf(sv), rubricNote:sv.rubric_note || ''};
       clsIn.value = res.source.teams_class; paste.value = '';
       tmsg.textContent = 'Read “' + sv.title + '” at ' + when(res.read_at) + '. Check the preview below against Teams before using it.';
       render();
@@ -383,7 +388,7 @@
     teams = {...(teams || {}), className:clsIn.value.trim() || (teams && teams.className) || '', importedAt:nowIso()};
     if(parsed) Object.assign(teams, {title:parsed.title, due:parsed.due, referenceMaterials:parsed.referenceMaterials,
                                      imported:{title:parsed.title, instructions:parsed.instructions}},
-                             parsed.how === 'read' ? {source:parsed.source, statusCounts:parsed.counts, referenceMaterialsRead:false} : {});
+                             parsed.how === 'read' ? {source:parsed.source, statusCounts:parsed.counts, referenceMaterialsRead:false, rubricState:parsed.rubricState || 'absent'} : {});
     if(!design.teamsClass && teams.className) { design.teamsClass = teams.className; refreshers.forEach(f => f()); }
     updateBar();
   }
@@ -469,8 +474,10 @@
       rows.push(row('counts', 'Status counts', total ? total + ' students: ' + Object.entries(st).map(([k, v]) => v + ' ' + k.toLowerCase()).join(', ') + (c.returned ? ', ' + c.returned + ' returned' : '') : 'Not read',
         [c.consistent === false ? hintEl('The rows didn’t add up to the “results found” line Teams showed. Don’t rely on these counts.', 'teams-now warn') : hintEl('Counts only: no student names or per-student statuses are read yet.')]));
       rows.push(row('source', 'Source', 'Class ' + parsed.source.class_id.slice(0, 8) + '…, assignment ' + parsed.source.assignment_id.slice(0, 8) + '…',
-        [hintEl('Read ' + when(parsed.source.read_at) + ' from Teams Assignments. Sections found: ' + (parsed.sections || []).join(', ') + '. Rubric: no separate rubric section was shown; any assessment descriptors are inside the instructions.')]));
+        [hintEl('Read ' + when(parsed.source.read_at) + ' from Teams Assignments. Sections found: ' + (parsed.sections || []).join(', ') + '. Rubric: ' + rubricText(parsed.rubricState) + (parsed.rubricNote ? ' ' + parsed.rubricNote : ''))]));
     }
+    if(!parsed && teams && teams.source && teams.rubricState)
+      rows.push(row('saved', 'Last read from Teams', when(teams.source.read_at || teams.importedAt || ''), [hintEl('Rubric: ' + rubricText(teams.rubricState))]));
     rows.push(courseRow(), gradeRow());
     results.replaceChildren(...rows);
     allBtn.disabled = !(parsed && (parsed.title || parsed.instructions));

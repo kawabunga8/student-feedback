@@ -6,7 +6,7 @@ block_live_browser(T)
 ok=[]
 def check(l,c,x=""): ok.append(bool(c)); print(("PASS " if c else "FAIL ")+l+(("  | "+str(x)[:200]) if x!="" else ""))
 
-from teams_fixtures import LIST, names, sts, roster, SV, CLASS_ID, ASSIGNMENT_ID
+from teams_fixtures import LIST, names, sts, roster, SV, SV_RUBRIC, CLASS_ID, ASSIGNMENT_ID
 items = T.parse_list(LIST)
 check("1 list: 7 rows read", len(items)==7, len(items))
 t4=[x for x in items if x["title"].startswith("Task A") and "Q1" in x["class_name"]][0]
@@ -62,4 +62,23 @@ sh=T.url_shape(pv+"?token=SECRET#x")
 check("  address shape masks ids and drops the query value", "<id>" in sh and "SECRET" not in sh and "11111111" not in sh and sh.startswith("/classes/<id>/assignments/<id>/preview"), sh)
 rv=u.split("?")[0]
 check("  roster address: review path counts (query ok); preview, list and empty do not", T.is_review_url(rv) and T.is_review_url(u) and not T.is_review_url(pv) and not T.is_review_url("https://assignments.example.test/classes/all/list") and not T.is_review_url(""))
+vr=T.parse_student_view(SV_RUBRIC); vn=T.parse_student_view(SV)
+check("7 rubric marker detected: present, never read", vr["rubric_present"] is True and vr["rubric_read"] is False and vn["rubric_present"] is False)
+check("  marker kept out of instructions and points; instructions unchanged", vr["instructions"] == vn["instructions"] and vr["points"] == vn["points"] and "View rubric" not in vr["instructions"] and "View rubric" not in vr["points"], vr["points"])
+vt=T.parse_student_view(SV.replace("1. Keep building.","Rubric\nView rubric\n1. Keep building."))
+check("  a Rubric line the teacher wrote mid-instructions is not the marker", vt["rubric_present"] is False and "View rubric" in vt["instructions"])
+va=T.parse_student_view("Back\nTask\nDue Nov 4\nInstructions\nDo it.\n\nRubric\nView rubric\nPoints\nNo points")
+check("  marker straight after the instructions does not leak into them", va["instructions"] == "Do it." and va["rubric_present"] is True, va["instructions"])
+vb=T.parse_student_view("Back\nTask\nDue Nov 4\nInstructions\nDo it.\nPoints\nNo points\nRubric\nView rubric")
+check("  marker after Points does not pollute the points value", vb["points"] == "No points" and vb["rubric_present"] is True, vb["points"])
+check("  three states from the parser: absent / present, not read", T.parse_student_view(SV)["rubric_present"] is False and vb["rubric_present"] is True and vb["rubric_read"] is False)
+vw=T.parse_student_view("Back\nTask\nDue Nov 4\nInstructions\nMark your own work against the rubric before you hand it in.\nRubric\nPoints\n5")
+check("  'rubric' as ordinary wording (inside a sentence, or a final line on its own) is never trimmed or detected", vw["rubric_present"] is False and vw["instructions"] == "Mark your own work against the rubric before you hand it in.\nRubric", vw["instructions"])
+vm=T.parse_student_view("Back\nTask\nDue Nov 4\nInstructions\nPart A\nRubric\nView rubric\nPart B\nPoints\n5")
+check("  a marker-looking pair in the MIDDLE of the instructions stays (only the end of the block is Teams' marker)", vm["rubric_present"] is False and "Part B" in vm["instructions"] and "View rubric" in vm["instructions"])
+pr=T.apply_rubric_probe(vn, {"control_names": ["View rubric"], "text_lines": []})
+check("8 a 'View rubric' CONTROL counts even when the page text has no such line", pr["rubric_present"] is True and pr["rubric_found_by"] == "page control" and "rubric_note" not in pr)
+pl=T.apply_rubric_probe(vn, {"control_names": ["Open grading rubric guide"], "text_lines": ["See rubric below"]})
+check("  a loosely named control or a text mention is only reported, not treated as the marker", pl["rubric_present"] is False and "none was exactly" in pl["rubric_note"] and "Open grading rubric guide" in pl["rubric_note"], pl.get("rubric_note"))
+check("  nothing found, nothing invented; text detection is kept and labelled", "rubric_note" not in T.apply_rubric_probe(vn, {"control_names": [], "text_lines": []}) and T.apply_rubric_probe(vr, {})["rubric_found_by"] == "page text")
 print(f"\n{sum(ok)}/{len(ok)} passed"); sys.exit(0 if all(ok) else 1)

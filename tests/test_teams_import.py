@@ -34,7 +34,7 @@ app.start_worker()
 threading.Thread(target=ThreadingHTTPServer(("127.0.0.1", 8765), app.Handler).serve_forever, daemon=True).start()
 
 
-from teams_fixtures import LIST, names, sts, roster, SV, CLASS_ID, ASSIGNMENT_ID
+from teams_fixtures import LIST, names, sts, roster, SV, SV_RUBRIC, CLASS_ID, ASSIGNMENT_ID
 
 ok_all = []
 def check(label, cond, extra=""):
@@ -50,7 +50,7 @@ def fake(op, cls="", title=""):
     if op == "list": return {"ok": True, "op": "list", "read_at": now, "assignments": T.parse_list(LIST), "log": []}
     return {"ok": True, "op": "read", "read_at": now, "source": {"class_id": "11111111-2222-4333-8444-555555555555", "assignment_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
             "url": "https://assignments.example.test/classes/11111111/assignment-review/aaaaaaaa", "teams_class": cls, "list_title": title, "read_at": now},
-            "student_view": T.parse_student_view(SV), "roster_counts": T.parse_roster(roster(list(zip(names, sts)), 6, 6)), "list_row": {}, "log": []}
+            "student_view": {**T.parse_student_view(SV_RUBRIC if mode[0] in ("rubric", "rubric_read") else SV), **({"rubric_read": True} if mode[0] == "rubric_read" else {}), **({"rubric_note": "Teams' page had 1 control(s) and 0 text line(s) mentioning \u201crubric\u201d, but none was exactly \u201cView rubric\u201d: Open grading rubric guide"} if mode[0] == "note" else {})}, "roster_counts": T.parse_roster(roster(list(zip(names, sts)), 6, 6)), "list_row": {}, "log": []}
 app.TEAMS_RUNNER = fake
 def call(method, path, body=None, headers=None):
     h = {"Content-Type": "application/json", **(headers or {})}
@@ -124,7 +124,7 @@ with sync_playwright() as p:
     tog.click()
     check("  and collapses again", "…" in pg.inner_text(".teams-row[data-key=instructions] .teams-val > span"))
     check("  no student names in the preview", not any("Test, " in x or "Alpha" in x for x in rows))
-    check("  class filled in; no rubric invented", pg.input_value(".teams-class") == "RCS - H - Q1 ICT 9 [2026-27]" and any("no separate rubric section" in x for x in rows))
+    check("  class filled in; no rubric invented", pg.input_value(".teams-class") == "RCS - H - Q1 ICT 9 [2026-27]" and any("no rubric button was shown" in x for x in rows))
     check("  read-only: the runner was asked only to list and read", {c[0] for c in calls if c[0] != "signed"} <= {"list", "read"} and ("read", "RCS - H - Q1 ICT 9 [2026-27]", "Task A: Build & Share") in calls, calls[-3:])
     pg.click("text=Confirm match"); time.sleep(0.6)
     pg.click(".teams-all"); time.sleep(0.5)
@@ -135,13 +135,50 @@ with sync_playwright() as p:
     recs = [json.load(open(os.path.join(HOME, "Library/Application Support/student-feedback/assignments", f))) for f in os.listdir(os.path.join(HOME, "Library/Application Support/student-feedback/assignments"))]
     t = recs[0]["teams"] if recs else {}
     check("  saved record keeps the source ids, read time, counts and 'reference materials not read'",
-          t.get("source", {}).get("assignment_id", "").startswith("aaaaaaaa") and t["source"].get("read_at") and t.get("statusCounts", {}).get("rows_read") == 6 and t.get("referenceMaterialsRead") is False, {k: str(v)[:60] for k, v in t.items()})
+          t.get("source", {}).get("assignment_id", "").startswith("aaaaaaaa") and t["source"].get("read_at") and t.get("statusCounts", {}).get("rows_read") == 6 and t.get("referenceMaterialsRead") is False and t.get("rubricState") == "absent", {k: str(v)[:60] for k, v in t.items()})
     check("  record has no student names", "Test, Alpha" not in json.dumps(recs))
     # paste route still works
     pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
     pg.fill(".teams-paste", "Back\nTask 9: Pasted\nDue Nov 9\nInstructions\nDo the thing.\nPoints\nNo points"); pg.click(".teams-read"); time.sleep(0.3)
     rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
     check("9 paste fallback still works", any("Task 9: Pasted" in x for x in rows) and not any("Status counts" in x for x in rows), rows[:2])
+    # a rubric marker in Student view: shown as present and not read, never mixed into the instructions
+    mode[0] = "rubric"; pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
+    pg.fill(".teams-filter", "") if pg.locator(".teams-filter").is_visible() else None
+    n0 = len(calls); pg.click(".teams-list-btn")
+    wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
+    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()
+    pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
+    rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
+    check("10a rubric marker shown as present, not read", any("present in Teams" in x and "not read" in x for x in rows), rows[-3:])
+    check("  and kept out of the instructions", not any("View rubric" in x for x in rows if x.startswith("Instructions")))
+    if pg.locator("text=Confirm match").count(): pg.click("text=Confirm match"); time.sleep(0.5)
+    pg.click(".teams-all"); time.sleep(0.5); pg.click(".teams-save"); time.sleep(1)
+    adir = os.path.join(HOME, "Library/Application Support/student-feedback/assignments")
+    t2 = json.load(open(os.path.join(adir, os.listdir(adir)[0])))["teams"]
+    check("10b saved record says the rubric is present and unread", t2.get("rubricState") == "present_unread", t2.get("rubricState"))
+    check("  imported instructions contain no rubric marker", "View rubric" not in pg.input_value("#rubric"))
+    pg.reload(); time.sleep(2.5); pg.click("text=Choose from Teams…"); time.sleep(0.5)
+    rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
+    check("10c after reload and reopen, the saved state is still present-but-unread", any(x.startswith("Last read from Teams") and "present in Teams" in x and "not read" in x for x in rows), rows[:3])
+    # a rubric that was actually read is a third, distinct state
+    mode[0] = "rubric_read"; pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
+    n0 = len(calls); pg.click(".teams-list-btn")
+    wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
+    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()
+    pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
+    rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
+    src_row = next(x for x in rows if x.startswith("Source"))
+    check("10d read rubric is reported as read, not as unread or absent", "present and read from Teams" in src_row and "not read" not in src_row.split("Rubric:")[1], src_row[-160:])
+    # the reader's diagnostic note is shown when it saw something rubric-like that wasn't the marker
+    mode[0] = "note"; pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
+    n0 = len(calls); pg.click(".teams-list-btn")
+    wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
+    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()
+    pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
+    src_row = next(x for x in pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())") if x.startswith("Source"))
+    check("10e absent plus a diagnostic note: both shown, nothing claimed present", "no rubric button was shown" in src_row and "Open grading rubric guide" in src_row, src_row[-200:])
+    mode[0] = "ok"
     # sign-in path in the page
     mode[0] = "sign_in"; calls.clear(); pg.fill(".teams-filter", ""); pg.click(".teams-list-btn")
     pg.wait_for_selector("text=I’ve signed in: resume", timeout=15000)

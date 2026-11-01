@@ -77,6 +77,25 @@ def parse_list(text):
 STATUS_KNOWN = ("Viewed", "Turned in", "Not turned in", "Returned", "Returned for revision", "Excused", "Not viewed")
 
 
+def apply_rubric_probe(sv, probe):
+    """Combine what the page TEXT showed with what the page's CONTROLS showed (a button's name may not be in the text, or may
+    load a moment later). Controls named exactly "View rubric" / "Rubric" count as the marker; anything looser is only reported."""
+    probe = probe or {}
+    names = [n for n in probe.get("control_names", []) if n]
+    exact = [n for n in names if re.match(r"^\s*(view\s+)?rubric\s*$", n, re.I)]
+    sv = dict(sv)
+    if exact and not sv.get("rubric_present"):
+        sv["rubric_present"] = True
+        sv["rubric_found_by"] = "page control"
+    elif sv.get("rubric_present"):
+        sv["rubric_found_by"] = "page text"
+    if not sv.get("rubric_present") and (names or probe.get("text_lines")):
+        sv["rubric_note"] = ("Teams' page had " + str(len(names)) + " control(s) and " + str(len(probe.get("text_lines", []))) +
+                             " text line(s) mentioning \u201crubric\u201d, but none was exactly \u201cView rubric\u201d: " +
+                             "; ".join((names + probe.get("text_lines", []))[:5]))
+    return sv
+
+
 def parse_roster(text):
     """Aggregate counts from the roster text, never names. Rows are read as groups of three lines after the
     'Feedback' header (initials, name, status), so a word in a name or in a tab label can't be counted as a status.
@@ -108,6 +127,8 @@ def parse_roster(text):
 
 
 SECTION = ("Instructions", "Reference materials", "My work", "Points")
+RUBRIC_BUTTON = re.compile(r"^View rubric$", re.I)   # Teams' button saying a rubric is attached (the rubric text is NOT on this page)
+RUBRIC_HEAD = re.compile(r"^Rubric$", re.I)          # on its own this could be the teacher's own word, so it only counts next to the button
 NOISE_FROM = re.compile(r"^Turn this doc into flashcards", re.I)    # Teams' own AI widget: not part of the assignment
 
 
@@ -136,14 +157,44 @@ def parse_student_view(text):
             return None
         nxt = [idx[s] for s in SECTION if idx[s] > a]
         return raw[a + 1:(min(nxt) if nxt else len(raw))]
+    def strip_marker(lines):
+        """Remove Teams' marker (a 'View rubric' button, with a 'Rubric' heading just before it) from the END of a block.
+        Returns (lines, found). A teacher's own word 'Rubric', or 'rubric' inside a sentence, is never touched."""
+        lines = list(lines)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines and RUBRIC_BUTTON.match(lines[-1].strip()):
+            lines.pop()
+            while lines and not lines[-1].strip():
+                lines.pop()
+            if lines and RUBRIC_HEAD.match(lines[-1].strip()):
+                lines.pop()
+            return lines, True
+        return lines, False
+
+    def clean(lines):
+        """For the short blocks after the instructions: drop the marker wherever it sits in them."""
+        lines = [l for l in (lines or [])]
+        has = any(RUBRIC_BUTTON.match(l.strip()) for l in lines)
+        if not has:
+            return lines, False
+        out = [l for k, l in enumerate(lines) if not RUBRIC_BUTTON.match(l.strip()) and
+               not (RUBRIC_HEAD.match(l.strip()) and k + 1 < len(lines) and RUBRIC_BUTTON.match(lines[k + 1].strip()))]
+        return out, True
     ins = block("Instructions")
+    rubric = False
+    if ins is not None:
+        ins, rubric = strip_marker(ins)
     instructions = re.sub(r"\n{3,}", "\n\n", "\n".join(ins).strip()) if ins is not None else ""
-    ref = block("Reference materials")
-    refs = [l.strip() for l in (ref or []) if l.strip()][:30]
-    pts = block("Points")
-    points = " ".join(l.strip() for l in (pts or []) if l.strip())[:120]
+    ref, r1 = clean(block("Reference materials"))
+    refs = [l.strip() for l in ref if l.strip()][:30]
+    pts, r2 = clean(block("Points"))
+    points = " ".join(l.strip() for l in pts if l.strip())[:120]
+    _, r3 = clean(block("My work"))
+    rubric = rubric or r1 or r2 or r3
     return {"title": title, "due": due, "multiple_submissions": multiple, "instructions": instructions,
             "reference_materials": refs, "reference_materials_read": False,
+            "rubric_present": rubric, "rubric_read": False,       # presence only: the descriptors are behind "View rubric" and are not read yet
             "points": points, "sections_found": [s for s in SECTION if idx[s] >= 0], "is_preview": preview,
             "found": due_at >= 0 and idx["Instructions"] >= 0}
 
@@ -327,7 +378,33 @@ class Session:
         if not is_preview_url(url):
             raise ReadError("differs", "Student view's address doesn't end in /preview (shape seen: " + url_shape(url) + ").",
                             {"log": self.log})
-        return self.text() or t
+        # Parts of this page (the rubric button among them) can appear after the instructions do: wait until the text has
+        # stopped changing for two reads in a row (at most ~8 s) before capturing it.
+        last, stable, end = None, 0, time.time() + 8
+        while time.time() < end and stable < 2:
+            cur = self.text()
+            stable = stable + 1 if cur == last else 0
+            last = cur
+            self.page.wait_for_timeout(1000)
+        self.rubric_probe = self.probe_rubric()
+        self.note("rubric probe: " + json.dumps(self.rubric_probe)[:300])
+        return last or t
+
+    def probe_rubric(self):
+        """Read-only: which buttons/links on the page have 'rubric' in their name, and which text lines mention it."""
+        f = self.frame(); names = []
+        try:
+            for role in ("button", "link", "menuitem"):
+                for el in f.get_by_role(role, name=re.compile("rubric", re.I)).all():
+                    try:
+                        n = (el.get_attribute("aria-label", timeout=1000) or el.inner_text(timeout=1000) or "").strip()
+                    except Exception:
+                        n = ""
+                    names.append(re.sub(r"\s+", " ", n)[:60])
+        except Exception as e:
+            names.append("(control probe failed: " + type(e).__name__ + ")")
+        lines = [re.sub(r"\s+", " ", l.strip())[:80] for l in self.text().splitlines() if re.search("rubric", l, re.I)][:6]
+        return {"control_names": names[:8], "text_lines": lines}
 
 
 def _launch(p, headless=False):
@@ -374,7 +451,7 @@ def run(op, cls="", title="", wait=120, signin_wait=240):
             roster = parse_roster(roster_text)
             roster_url = re.sub(r"[?#].*", "", s.frame().url)
             sv_text = s.student_view(want["title"])
-            sv = parse_student_view(sv_text)
+            sv = apply_rubric_probe(parse_student_view(sv_text), getattr(s, "rubric_probe", None))
             ids2 = ids_from_url(s.frame().url)
             if ids2 != ids:
                 raise ReadError("differs", "The roster and Student view addresses name different assignments; nothing was returned.")
