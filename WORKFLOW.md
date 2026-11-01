@@ -408,7 +408,7 @@ same instructions and criteria ready for feedback. This works with the pasted St
 
 **Status (2026-10-31): persistent sessions and the first job queue are built.** Sessions: work, drafts, levels, notes, comments, review marks and posting ticks survive closing the page (see `ARCHITECTURE.md`, "Assessment sessions"). The queue (see "Background job queue") runs one job type, drafting feedback in the background with the local model; it survives an app restart and never resumes on its own. Next: run `tools/spike_teams_assignments.py` (written, not yet run) to see what Teams' Assignments frame exposes as text. Still to do, in this order: the read-only Teams picker, collection jobs, then posting automation (off, pilot mode, read-back).
 
-### Read-only Teams reader: BUILT as a first version (2026-11-01); spike evidence from one class and one assignment; not yet run end to end through the app on live Teams.
+### Read-only Teams reader: BUILT as a first version (2026-11-01); one live import through the app, compared by hand for one assignment (see the 2026-11-01 result below); everything else still unverified.
 
 **Spike result (2026-11-01, one run, ICT 9 "Task 4" opened):**
 
@@ -443,6 +443,7 @@ same instructions and criteria ready for feedback. This works with the pasted St
   rubric section, reference materials or attachments (the output was cut at 1,500 characters). The spike now prints the
   section labels it finds.
 - **Not yet tested:** attachments (reference materials are listed by name only and never opened), other list tabs (Returned, Drafts, Past due), other statuses (Returned, Returned for revision, excused), other classes and assignment types, and an assignment with a rubric or points. The Student view output was truncated on screen, so **extraction is not marked complete until the full text has been compared with Teams by eye.**
+- **Live import result (2026-11-01, one class, one assignment: "Task 4"):** listing assignments returned 15; reading Task 4 through the app reached Student view after two navigation-timing fixes (the reader now waits for the address to settle, ignoring query and fragment). Compared by hand with Teams' Student view: instruction wording matches (all seven sections in order through the final reflection, 1,855 characters, no missing wording, no reference file name or flashcard-widget text); reference PDF listed by name and marked not read; title, class and status counts as expected. **Verified for this assignment only:** instruction wording and counts. **Known differences:** (1) Teams' bullet symbols and bold styling are not preserved (bullet items come through as separate lines); (2) the due time read by the app's Chrome (3:00 PM) differed from the time shown in the teacher's own Teams browser (4:00 PM); the cause is not confirmed, so treat the app's due time as unreliable and take it from Teams. **Still untested:** other classes, other list tabs and statuses, per-student statuses, rubric and attachments, and a full end-to-end run on any other assignment.
 - **Decision (2026-11-01):** the page is readable, so the reader was built (see `ARCHITECTURE.md`, "Read-only Teams reader").
 
 (Original proposal follows.)
