@@ -23,6 +23,9 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import feedback as fb
+import hashlib
+import sys
+import jobs
 
 HOST, PORT = "127.0.0.1", 8765
 STANDARDS_DIR = Path(__file__).parent / "standards"  # drop learning-standards PDFs here
@@ -469,6 +472,154 @@ def save_session(aid, students, base_version):
             idx[aid] = rel
             _atomic_write_json(SESSION_INDEX, idx)
         return {"path": rel, "session": session, "status": session_status(session, rec)}
+
+
+def draft_for(p):
+    """One draft of feedback, from the same request the page sends to /api/generate. Used by that route and by the
+    background drafting job, so both write feedback the same way."""
+    rubric = p.get("rubric", "").strip()
+    picked = [x["text"] for x in load_standards().get(p.get("doc"), []) if x["id"] in p.get("standards", [])]
+    if picked:
+        rubric = (rubric + "\n\n" if rubric else "") + "Learning standards (RCS 2026-27):\n\n" + "\n\n".join(picked)
+    if not rubric:
+        raise ValueError("Add an assignment description or choose learning standards.")
+    return fb.generate(p["model"], rubric, p.get("grade", ""), p.get("label", "student"), p["work"], p.get("notes", ""), p.get("level", ""),
+                       p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""))
+
+
+JOB_ID = re.compile(r"job-\d{8}-\d{6}-[0-9a-f]{6}")
+JOB_SETTINGS = ("model", "rubric", "doc", "standards", "grade", "term", "length", "title")
+QUEUE = None
+
+
+def _run_draft_job(queue, job):
+    """Drafts feedback one student at a time. Finished drafts are saved as they complete (so a restart never loses one),
+    and nothing here posts anywhere."""
+    side = queue.request_of(job)
+    req, items = side["request"], {i["idx"]: i for i in side["items"]}
+    while not queue.cancel_requested(job["id"]):
+        nxt = queue.next_item(job["id"])
+        if not nxt:
+            return
+        it = items[nxt["idx"]]
+        p = {**req["settings"], "work": it["work"], "notes": it.get("notes", ""), "level": it.get("level", ""),
+             "grade": it.get("grade") or req["settings"].get("grade", ""), "label": it.get("label") or "student"}
+        try:
+            queue.item_finished(job, nxt["idx"], nxt["key"], "done", result={"feedback": draft_for(p)})
+        except (urllib.error.URLError, ConnectionError):
+            engine, _ = fb.split_model(p.get("model", ""))
+            raise jobs.JobFailed(fb.unreachable(engine))
+        except RuntimeError as e:        # the engine answered with its own error (e.g. couldn't load the model): stop, keep the rest queued
+            raise jobs.JobFailed(str(e))
+        except Exception as e:           # a problem with this student only: record it and carry on
+            queue.item_finished(job, nxt["idx"], nxt["key"], "failed", error=f"{type(e).__name__}: {e}")
+
+
+TEAMS_FOLDER = "@teams"      # pseudo-folder for Teams read jobs (kept under App Support, outside Assessment and git)
+TEAMS_JOB_KEY = "teams"      # the job list key for these jobs (not an assignment id)
+TOOLS_PYTHON = Path.home() / ".venvs" / "student-feedback-tools" / "bin" / "python"
+
+
+def teams_runner(op, cls="", title=""):
+    """Run teams_read.py in its own process (it needs Playwright, which lives in the tools venv, and a Chrome window)
+    and return its JSON answer. Tests replace this function."""
+    py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
+    cmd = [py, str(HERE / "teams_read.py"), op] + (["--class", cls, "--title", title] if op == "read" else [])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "kind": "error", "error": "Reading Teams took longer than 15 minutes and was stopped."}
+    last = next((l for l in reversed((r.stdout or "").strip().splitlines()) if l.startswith("{")), "")
+    try:
+        return json.loads(last)
+    except ValueError:
+        return {"ok": False, "kind": "setup" if r.returncode == 3 else "error",
+                "error": "The Teams reader gave no answer. " + ((r.stderr or "").strip()[-300:] or f"Exit code {r.returncode}.")}
+
+
+def _run_teams_job(queue, job):
+    """One Teams read (the list, or one assignment). Read-only. A sign-in page leaves the job waiting for the teacher."""
+    side = queue.request_of(job)
+    req = side["request"]
+    nxt = queue.next_item(job["id"])
+    if not nxt:
+        return
+    out = TEAMS_RUNNER(req["op"], req.get("class", ""), req.get("title", ""))
+    kind = out.get("kind", "")
+    if out.get("ok"):
+        queue.item_finished(job, nxt["idx"], nxt["key"], "done", result={"teams": out})
+    elif kind == "sign_in":
+        raise jobs.NeedsSignIn(out.get("error", "Sign in to Microsoft in the Chrome window, then resume."))
+    elif kind in ("busy", "setup", "blocked"):
+        raise jobs.JobFailed(out.get("error", "The Teams reader couldn't start."))
+    else:                                  # the page differed, nothing matched, or something else: record why, keep the details
+        queue.item_finished(job, nxt["idx"], nxt["key"], "failed", error=str(out.get("error", "Failed"))[:300], result={"teams": out})
+
+
+def enqueue_teams_job(body):
+    if QUEUE is None:
+        raise RuntimeError("The job worker isn't running.")
+    op, cls, title = str(body.get("op", "")), str(body.get("class", "")).strip()[:200], str(body.get("title", "")).strip()[:300]
+    if op not in ("list", "read"):
+        raise ValueError("op must be list or read")
+    if op == "read" and not (cls and title):
+        raise ValueError("read needs the Teams class and the assignment title")
+    if any(j["state"] in ("queued", "running", "waiting_for_sign_in") for j in QUEUE.list_for(TEAMS_JOB_KEY, 20) if j["type"] == "teams_read"):
+        raise ValueError("A Teams read is already queued, running or waiting for you to sign in.")
+    return QUEUE.enqueue("teams_read", TEAMS_JOB_KEY, TEAMS_FOLDER, {"op": op, "class": cls, "title": title},
+                         [{"key": op, "work_sha": ""}])
+
+
+TEAMS_RUNNER = teams_runner
+
+
+def start_worker():
+    """Create the job queue (journal in App Support) and start its worker. Call once, when the app starts."""
+    global QUEUE
+    if QUEUE is None:
+        def inside(rel):
+            if rel == TEAMS_FOLDER:               # Teams reads aren't tied to an assignment folder: they have no student work
+                return (APP_DATA / "teams-reads").resolve()
+            root = ASSESSMENT.resolve()
+            d = (root / rel).resolve()
+            if d == root or not d.is_relative_to(root):
+                raise ValueError("bad folder")
+            return d
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"draft": _run_draft_job, "teams_read": _run_teams_job}, inside, _atomic_write_json, _read_json)
+    QUEUE.start()
+    return QUEUE
+
+
+def enqueue_draft_job(body):
+    aid = str(body.get("assignment", ""))
+    rec = load_assignment_record(aid)
+    rel, _ = session_folder(aid, rec)
+    if QUEUE is None:
+        raise RuntimeError("The job worker isn't running.")
+    if any(j["state"] in ("queued", "running", "interrupted") for j in QUEUE.list_for(aid, 20) if j["type"] == "draft"):
+        raise ValueError("A drafting job for this assignment is already queued, running or waiting to be resumed.")
+    settings = {k: body.get("settings", {}).get(k, "") for k in JOB_SETTINGS if k != "standards"}
+    settings["standards"] = [str(x) for x in (body.get("settings", {}).get("standards") or [])][:50]
+    if not settings["model"]:
+        raise ValueError("Choose a model first.")
+    raw = body.get("items")
+    if not isinstance(raw, list) or not raw or len(raw) > 400:
+        raise ValueError("items must be a list of 1 to 400 students")
+    items, seen = [], set()
+    for it in raw:
+        key, work = str(it.get("key", ""))[:64], str(it.get("work", ""))[:200_000]
+        if not key or key in seen or not work.strip():
+            raise ValueError("each item needs a unique key and some work")
+        seen.add(key)
+        items.append({"key": key, "work": work, "notes": str(it.get("notes", ""))[:20_000], "level": str(it.get("level", ""))[:30],
+                      "grade": str(it.get("grade", ""))[:30], "label": str(it.get("label", ""))[:120],
+                      "work_sha": hashlib.sha256(work.encode("utf-8")).hexdigest()})
+    request = {"settings": settings, "basis": str(body.get("basis", ""))[:400_000], "overwrite": bool(body.get("overwrite"))}
+    return QUEUE.enqueue("draft", aid, rel, request, items)
+
+
+def _job_view(job):
+    return {k: job[k] for k in ("id", "type", "assignment", "state", "created", "started", "finished", "error", "total", "counts", "items", "drafts", "basis", "overwrite") if k in job}
 
 
 SECTION_SUFFIX = re.compile(r"_(?:homework|handouts)$", re.I)
@@ -1159,7 +1310,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Stopped after " + i + " students. Existing drafts remain available." : failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -1186,7 +1337,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -1222,6 +1373,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"error": "Assignment not found."})
         elif self.path == "/api/class-map":
             self._send(200, {"map": _read_json(CLASS_MAP, {})})
+        elif self.path.startswith("/api/jobs"):
+            try:
+                if QUEUE is None:
+                    raise RuntimeError("The job worker isn't running.")
+                parts = urllib.parse.urlparse(self.path)
+                if parts.path == "/api/jobs":
+                    aid = urllib.parse.parse_qs(parts.query).get("assignment", [""])[0]
+                    if aid != TEAMS_JOB_KEY:
+                        load_assignment_record(aid)
+                    return self._send(200, {"jobs": [_job_view(j) for j in QUEUE.list_for(aid)]})
+                jid = parts.path.rsplit("/", 1)[1]
+                if not JOB_ID.fullmatch(jid):
+                    raise ValueError("bad job id")
+                self._send(200, {"job": _job_view(QUEUE.get(jid, with_results=True))})
+            except (ValueError, FileNotFoundError):
+                self._send(200, {"error": "Job not found."})
+            except Exception as e:
+                self._send(200, {"error": f"{type(e).__name__}: {e}"})
         elif self.path.startswith("/api/session?"):
             try:
                 aid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("assignment", [""])[0]
@@ -1279,7 +1448,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"students": [{"name": a, "work": b} for a, b in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
-        if self.path in ("/api/assignments", "/api/class-map", "/api/session"):
+        if self.path in ("/api/assignments", "/api/class-map", "/api/session") or self.path.startswith("/api/jobs"):
             # Saving needs a JSON request from this app's own page: another website can't send one without the
             # browser asking first (a preflight this server never approves), and a stated Origin must be this app.
             origin = self.headers.get("Origin")
@@ -1288,7 +1457,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, {"error": "forbidden"})
             try:
                 n = int(self.headers.get("Content-Length", 0))
-                if n > (20_000_000 if self.path == "/api/session" else 500_000):
+                if n > (20_000_000 if self.path == "/api/session" or self.path.startswith("/api/jobs") else 500_000):
                     raise ValueError("too large")
                 body = json.loads(self.rfile.read(n))
                 if self.path == "/api/assignments":
@@ -1297,6 +1466,22 @@ class Handler(BaseHTTPRequestHandler):
                     except VersionConflict as c:
                         return self._send(409, {"error": "This assignment was saved somewhere else after this page opened it.",
                                                 "conflict": True, "current": c.current})
+                if self.path.startswith("/api/jobs"):
+                    if self.path == "/api/jobs":
+                        enqueue = enqueue_teams_job if body.get("type") == "teams_read" else enqueue_draft_job
+                        return self._send(200, {"job": _job_view(enqueue(body))})
+                    _, _, _, jid, action = self.path.split("/")
+                    if not JOB_ID.fullmatch(jid) or QUEUE is None:
+                        raise ValueError("bad job id")
+                    if action == "cancel":
+                        job = QUEUE.cancel(jid)
+                    elif action == "resume":
+                        job = QUEUE.resume(jid)
+                    elif action == "delivered":
+                        job = QUEUE.mark_delivered(jid, [str(k) for k in body.get("keys", [])])
+                    else:
+                        raise ValueError("unknown action")
+                    return self._send(200, {"job": _job_view(job)})
                 if self.path == "/api/session":
                     try:
                         return self._send(200, save_session(str(body.get("assignment", "")), body.get("students"), body.get("baseVersion")))
@@ -1304,6 +1489,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(409, {"error": "This session was saved somewhere else after this page opened it.",
                                                 "conflict": True, "current": c.current})
                 return self._send(200, {"map": save_class_mapping(body)})
+            except FileNotFoundError:
+                return self._send(200, {"error": "Not found: that assignment or job doesn't exist."})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
         if self.path != "/api/generate":
@@ -1312,14 +1499,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length", 0))
             p = json.loads(self.rfile.read(n))
-            rubric = p.get("rubric", "").strip()
-            picked = [x["text"] for x in load_standards().get(p.get("doc"), []) if x["id"] in p.get("standards", [])]
-            if picked:
-                rubric = (rubric + "\n\n" if rubric else "") + "Learning standards (RCS 2026-27):\n\n" + "\n\n".join(picked)
-            if not rubric:
-                raise ValueError("Add an assignment description or choose learning standards.")
-            text = fb.generate(p["model"], rubric, p.get("grade", ""), p.get("label", "student"), p["work"], p.get("notes", ""), p.get("level", ""), p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""))
-            self._send(200, {"feedback": text})
+            self._send(200, {"feedback": draft_for(p)})
         except (urllib.error.URLError, ConnectionError):
             engine, _ = fb.split_model(p.get("model", ""))
             self._send(200, {"error": fb.unreachable(engine) + ", then click Generate again."})
@@ -1340,6 +1520,7 @@ if __name__ == "__main__":
         print(f"Student Feedback is already running at {url} - opening it in your browser.")
         webbrowser.open(url)
         raise SystemExit(0)
+    start_worker()
     print(f"Student Feedback running at {url}  (Ctrl+C to stop)")
     if not os.environ.get("NO_BROWSER"):
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

@@ -14,7 +14,7 @@ Review marks bind student identity, source text, private notes, feedback, level,
 assignment instructions, selected standard labels, grade, course, school year and quarter. Editing these
 invalidates the mark. A reviewed snapshot includes a SHA-256 fingerprint of source text. It is a portable
 review snapshot, not the future durable posting authorization contract. There is no snapshot import yet.
-Student work and review marks are not automatically persisted; export before closing. CSV exports contain
+Once the assignment is saved, student work, drafts, levels, review marks and posting ticks are kept in its session and come back when you reopen it (see "Persistent sessions" below). Until the assignment is saved, nothing is kept between visits: the page says so. CSV exports contain
 all generated drafts, including unreviewed ones, and must still be checked before manual posting.
 
 Checked in isolated Chrome with synthetic data and mocked API responses: stage navigation, generation,
@@ -50,7 +50,9 @@ with its name, instructions, feedback focus, course, grade, term and standards. 
 **Use course grades**. Under each field is where its value came from and when ("Teams (Student view, pasted)",
 "Course Hub (match you confirmed)", "Edited here", …).
 
-**Choose from Teams… (paste version).** Paste the assignment's Student view (⌘A, ⌘C in Teams) and type or paste the
+**Choose from Teams…** has two routes into the same preview rows. **List my assignments** reads your Teams assignment list in the app's own Chrome window (read-only); choose one and the app reads its Student view and aggregate status counts. The second route is the paste described next, which stays as the fallback. Details are under "Reading Teams" at the end of this file.
+
+**Paste route.** Paste the assignment's Student view (⌘A, ⌘C in Teams) and type or paste the
 class name from the Assignments list. Each row shows the Teams value beside what Setup has now, with **Use**;
 replacing the instructions asks first and keeps the feedback focus. Reference materials are listed separately, not
 added to the instructions. The course row suggests a Course Hub course from the class name for Shingo to confirm
@@ -94,8 +96,9 @@ second tab saved the session first, nothing is overwritten: choose **Load the sa
 Checked in Chromium with synthetic students and a stand-in model (39 session checks, plus the 65 earlier checks):
 save and reopen, an edit voiding a review mark and staying void after reopening, the posting tick showing as changed,
 instruction changes voiding review, two tabs, switching assignments, folder names that try to leave the Assessment
-folder, and refused cross-origin and non-JSON saves. Not exercised: the real Assessment folder and macOS file
-permissions, live Course Hub class lists, and very large classes.
+folder, and refused cross-origin and non-JSON saves. The macOS permission check passed on the real Assessment folder
+on 2026-10-31 (`check_session_folder.py` saved, read back and removed a test file); a full save and reopen of a real
+class through the app has not been done. Not exercised: live Course Hub class lists and very large classes.
 
 Server-side approvals: the server, not only the page, decides whether a review mark still holds (see `ARCHITECTURE.md`,
 "Assessment sessions"). If a student is reviewed on the page but not approved on the server (for example you reviewed
@@ -103,4 +106,24 @@ against instructions you hadn't saved yet), the session line says so and what to
 reviewed again. Checked with 31 further checks: each stored value changed under an unchanged approval, forged and
 unreadable approvals, instruction, title, standards and focus changes, a change that shouldn't void anything, re-approval
 stamping, posting ticks, and the gated posting reader. `check_session_folder.py` (in the repo root) tests that macOS lets
-the app save into your real Assessment folder.
+the app save into your real Assessment folder (passed 2026-10-31).
+
+Background drafting (`ui/jobs.js`): in Draft & review, "Draft in the background" queues the students who have work and no
+feedback yet (tick "Redraft" to include the others). The app writes them one after another and keeps going if you close
+the page; the panel shows progress with Cancel, and Resume if the app was closed mid-job. Drafts come back into the cards
+only if that student's work hasn't changed since you queued them. The assignment must be saved first. Checked with 22
+checks over HTTP (restart mid-job, resume without redoing finished drafts, cancel, Ollama not running, refused requests,
+no student text in the journal) and 12 in a browser. Not exercised: a real Ollama run, a large class, and a real restart
+of the Mac app.
+
+Reading Teams (`teams_read.py`, `ui/assignment.js`): "List my assignments" queues a read-only job. The app opens its
+automated Chrome profile, clicks Teams' Assignments icon, and reads the embedded Assignments frame. "Read this
+assignment" matches on class and title together, then reads the Student view and the roster page's counts. The preview
+shows the instructions, reference materials by name only (**not opened or read**), aggregate status counts (no student
+names), and the source: class id, assignment id, read time. Teams shows no separate rubric section on the assignment
+tested, so assessment descriptors, if any, are inside the instructions. If Microsoft asks for sign-in, the job waits and
+the dialog offers a resume button; if Chrome's profile is already open elsewhere, it says "Browser profile in use".
+Checked with 28 parser checks on fixture text with invented names, and 30 checks of the job and dialog with a stand-in
+reader. **Not yet run end to end through the app against live Teams**; the spike (`tools/spike_teams_assignments.py`)
+read one class and one assignment on 2026-11-01. Extraction is not marked complete until the full output has been
+compared with Teams by eye.

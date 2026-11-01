@@ -103,7 +103,7 @@ itself, not in the device-bridge shell.
   with nothing submitted listed in `_MISSING_SUBMISSIONS.txt`.
 - **`phase-a-collect-and-draft`** (Claude skill, saved on Shingo's account) —
   the full Phase A workflow: confirms assignment details, collects from
-  ClassNotebook (vision-based reading), handwriting photos, Teams
+  ClassNotebook (vision-based reading; the skill text predates the typed-page spike), handwriting photos, Teams
   attachments, and Canva/SharePoint links; runs `stage_submissions.py`; runs
   `feedback.py`'s batch drafting; stops with a status report. No posting.
   Triggered by Shingo saying things like "process assignment X."
@@ -169,6 +169,9 @@ system, try methods in this order and fall back only when the one above fails:
    individual assignment pages by title.
 6. Stable URL form:
    `.../Doc.aspx?sourcedoc={notebook-guid}&wd=target(<StudentName>/<PageGroup>.one|<section-guid>/<PageTitle>|<page-guid>/)`
+
+**Update 2026-10-31:** a script read one typed page as text from OneNote's frame (`tools/spike_onenote_text.py`), so the
+screenshot method below is now the fallback for handwriting, images and pages the spike hasn't covered, not the only way.
 
 **Read method — screenshot/vision transcription.** `get_page_text`/`read_page`
 can't see into OneNote's cross-origin canvas. The `computer` tool's `zoom`
@@ -394,17 +397,92 @@ using the trace IDs above if Shingo wants the faster path back.
 "Assignment records"). Order:
 1. Save and reopen assignments locally. **Done 2026-10-31.**
 2. Design step with a Teams-ready preview and copy actions. **Done 2026-10-31.**
-3. Read-only Teams picker ("Choose from Teams…") through the local Chrome worker. Until then the dialog reads
-   pasted Student view text.
+3. Read-only Teams picker ("Choose from Teams…") through the local Chrome worker. **Built 2026-11-01 (first version); not
+   yet run through the app against live Teams.** The dialog still accepts pasted Student view text as the fallback.
 4. Wire the field buttons to the selected Teams assignment.
 5. "Create draft in Teams" through the browser worker; publishing stays a separate, explicit action.
 6. Refresh with change detection, and link the record to collection, the manifest and approval.
 
 First milestone: choose an existing Teams assignment → import → confirm the Course Hub match → save → reopen with the
-same instructions and criteria ready for feedback. This works today with the pasted Student view; step 3 makes the
-choosing a real pick.
+same instructions and criteria ready for feedback. This works with the pasted Student view, and with the reader once it has been run live.
 
-**Next after the assignment records (2026-10-31): persistent sessions, then the job queue.** Persistent sessions are built (see `ARCHITECTURE.md`, "Assessment sessions"): work, drafts, levels, notes, comments, review marks and posting ticks survive closing the page. Still to do, in this order: a durable job queue with a background worker (progress, cancellation, recovery after a restart), then the read-only Teams picker and collection.
+**Status (2026-10-31): persistent sessions and the first job queue are built.** Sessions: work, drafts, levels, notes, comments, review marks and posting ticks survive closing the page (see `ARCHITECTURE.md`, "Assessment sessions"). The queue (see "Background job queue") runs one job type, drafting feedback in the background with the local model; it survives an app restart and never resumes on its own. Next: run `tools/spike_teams_assignments.py` (written, not yet run) to see what Teams' Assignments frame exposes as text. Still to do, in this order: the read-only Teams picker, collection jobs, then posting automation (off, pilot mode, read-back).
+
+### Read-only Teams reader: BUILT as a first version (2026-11-01); spike evidence from one class and one assignment; not yet run end to end through the app on live Teams.
+
+**Spike result (2026-11-01, one run, ICT 9 "Task 4" opened):**
+
+- The automated Chrome profile stayed signed in; no sign-in policy block.
+- **Waiting for the frame:** the first run found no frame text and the second read it. The third run showed the cause:
+  the wait printed "no frame" for 120 s while the frames table printed straight afterwards listed it. Playwright's Python
+  API only sees new frames while one of its own calls is running, and the wait used `time.sleep()`. **Reader rule: poll
+  with `page.wait_for_timeout()`, never `time.sleep()`, and log when the frame appeared and how much text it had.** Strongly
+  indicated by that run; the corrected wait has not been run yet.
+- **Assignment list: readable as text.** Each assignment shows title, due date and time, the **Teams class name** (so the
+  dialog's "Teams class" box can be filled automatically), and one or two fractions. The fractions are not labelled.
+  They are probably turned in / assigned and returned / turned in (2/28 then 0/2 matched a roster with 2 turned in);
+  **inferred from one case, to be confirmed.** The list rows are not links (0 anchors), so there is no address per row
+  before opening one.
+- **Roster: readable as text.** Tabs "To return (28)" and "Returned (0)" give the counts directly, and a "28 results found"
+  line is shown. Each student row has a status: Viewed, Turned in, Not turned in seen so far. Statuses for returned work,
+  "Returned for revision" and excused are unseen. Counting must use whole lines: counting words overcounts ("Turned in"
+  also matches inside "Not turned in", and "Returned" matches the tab label). The spike's first version did this; fixed.
+- **Selectors seen:** the list showed 15 list items (one per assignment row); the roster showed 29 rows, header included
+  (28 students). Exact counts from this run: Viewed 24, Not turned in 2, Turned in 2, Returned 0.
+- **Matching:** assignments are matched on class and title together, never the first partial title match; zero or several
+  matches stop the read with the candidates listed. Identifiers are kept with the result.
+- **Identifiers:** after opening an assignment the frame's address carries a class id and an assignment id
+  (`/classes/<class id>/assignment-review/<assignment id>`). Rows link to those addresses. This is the stable source
+  reference; the title is not. Read them from the frame address, not from the list.
+- **Student view (third run):** the "..." menu on the roster page holds Hide student names, Edit assignment, Mark as
+  inactive, Student view, Export to Excel and Delete assignment. **The reader may click only an exact "Student view"
+  item and nothing else in that menu.** Student view opened in the same frame (one page, no new tab) at
+  `/classes/<class id>/assignments/<assignment id>/preview`, and the instructions read as text (2,187 characters, with
+  headings such as Instructions, Where to submit and Your tasks). Likely the same text the paste dialog receives, so the
+  existing parser may be reusable: **a hypothesis, to be tested on real text.** Not yet seen: whether the text has a
+  rubric section, reference materials or attachments (the output was cut at 1,500 characters). The spike now prints the
+  section labels it finds.
+- **Not yet tested:** attachments (reference materials are listed by name only and never opened), other list tabs (Returned, Drafts, Past due), other statuses (Returned, Returned for revision, excused), other classes and assignment types, and an assignment with a rubric or points. The Student view output was truncated on screen, so **extraction is not marked complete until the full text has been compared with Teams by eye.**
+- **Decision (2026-11-01):** the page is readable, so the reader was built (see `ARCHITECTURE.md`, "Read-only Teams reader").
+
+(Original proposal follows.)
+
+Nothing below is built. The first step is `tools/spike_teams_assignments.py` (written, not yet run). **Its result decides
+whether to build the browser reader or to improve the paste fallback.** Do not fix the reader's interface before the
+spike shows what the Assignments list and the Student view actually expose; aggregate status counts may need a
+different view from the one the list shows. The Microsoft 365 connector is blocked, so there is no API route.
+
+**Version 1 scope (Shingo's decision):** assignment details and aggregate status counts only. Per-student statuses (needed
+for "skip Returned") come later, after assignment selection and identity matching are proven.
+
+**Plan, if the spike shows the frame is readable:**
+
+1. **`teams_read.py`**: list assignments (class, title, due date); read one assignment (instructions from Student view,
+   points, rubric text, status counts). It runs in the automated Chrome profile.
+2. **A `teams_read` job on the existing queue**, one browser job at a time. A sign-in page puts the job in
+   `waiting_for_sign_in`; the teacher signs in and resumes. The journal still holds no student text.
+3. **The "Choose from Teams" dialog** gets a "List my assignments" button and fills the same preview rows the paste does,
+   followed by the existing Course Hub match step. Paste stays as the fallback.
+4. **Every result carries its source:** Teams class and assignment identifiers where Teams exposes them, the page URL,
+   and the time of the read. A title alone is not an identifier: the same title can exist in more than one class or term.
+5. **The import preview keeps these apart:** assignment instructions, rubric text, and attached resources. Reading the
+   instructions does not mean attached reference material was read. Attachments are listed by name and marked "not read"
+   unless they were actually opened and read.
+
+**Read-only is a guardrail, not a guarantee.** The reader may click only a fixed set of navigation targets (the
+Assignments icon, a list row, Student view). It must also never type, submit a form, or touch grading controls
+(Feedback, Return, Points, Edit assignment), and it must treat any unexpected navigation as a failure. At each step it
+checks that the page matches what it expects (right frame, right heading, no dialog) and **stops with a plain message
+when the page differs**, rather than trying other clicks.
+
+**One owner for the Chrome profile.** The OneNote spike, the Teams reader and any later collection or posting worker
+share one profile folder, and Chrome allows only one process per profile. The app takes a single "browser in use" lock
+before starting any browser job; a second job waits or is refused with "browser profile in use (OneNote collection
+running)", never silently started. The two spikes do not check any lock yet: until the app owns it, run only one browser script at a time and close its Chrome window first.
+
+**Testing:** parser tests on saved frame text with student names replaced; the failure cases (signed out, blocked
+sign-in policy, assignment not found, profile in use, page differs from expectations); then one real read compared with
+Teams by eye. None of this has been done.
 
 **Posting approach (Shingo, 2026-10-31): assisted now, automate next.** The workspace's Export & posting step opens Teams and MySchool and copies each reviewed student's approved text; Shingo pastes and submits. Automation follows in stages: a read-only Teams/MySchool test, a dry run that fills but doesn't submit, one verified real post with Shingo watching, then batches.
 
@@ -415,7 +493,7 @@ detail; where it differs, the order above wins.
 
 1. ~~Test the OneNote/SharePoint pull~~ — done.
 2. ~~Folder-staging script~~ — done, `stage_submissions.py` deployed.
-3. ~~Decide the ClassNotebook read method~~ — done, screenshot/vision.
+3. ~~Decide the ClassNotebook read method~~ — decided then as screenshot/vision; since narrowed by the typed-page spike (see the update note in the OneNote section).
 4. ~~Phase A skill~~ — done, `phase-a-collect-and-draft` saved.
 5. ~~Map Teams Assignments and MySchool posting click-paths~~ — done,
    2026-10-30 (see Phase B section above). Actual posting actions

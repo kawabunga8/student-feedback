@@ -22,11 +22,14 @@ is today and, under "Target", how it moves toward that goal.
 | Prompt guard: student work is evidence, not instructions | Implemented 2026-10-31 |
 | Teacher workspace (`ui/workspace.js`, `ui/workspace.css`): Design assignment, Setup, Collect, Draft & review, Export & posting; review marks that any later edit voids; reviewed JSON snapshot; **assisted posting** (open Teams/MySchool, copy the approved feedback, comment and level code, tick when done; edits after posting are flagged) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. Not saved automatically (export before closing); the snapshot is not posting authorization; automated collection and posting not connected |
 | Saved assignment records, Design step and Choose from Teams (`ui/assignment.js`; `/api/assignments`, `/api/class-map`) | Implemented 2026-10-31 (steps 1 and 2 of the assignment-record plan); checked in a browser with synthetic data. Choose from Teams reads pasted Student view text for now; the read-only picker, Create draft in Teams, and refresh with change detection are not built |
+| Read-only Teams reader (`teams_read.py`; `teams_read` job; "List my assignments" in the Choose from Teams dialog) | **Built 2026-11-01 (first version).** Parsers checked on fixture text with invented names (28 checks); the job, sign-in wait, profile lock and dialog checked with a stand-in reader (30 checks). **Not yet run end to end through the app against live Teams.** Reads assignment details and aggregate status counts only; no per-student statuses or names; reference materials listed by name, never read |
 | Persistent assessment sessions (`manifest.json` in the assignment's Assessment folder; `/api/session`) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. A first, smaller version of the manifest: no collection outcomes, captures or name mapping yet |
+| Background job queue (`jobs.py`; `/api/jobs`; `ui/jobs.js`) with one job type, **draft feedback batch** | Implemented 2026-10-31; checked over HTTP with a stand-in model (app killed mid-job and restarted, resume, cancel, engine down, refused requests, journal holds no student text) and in a browser with synthetic data. Only drafting runs through it. **No browser jobs, Teams import, collection or posting jobs exist yet.** `waiting_for_sign_in` and `needs_teacher_input` states are defined but unused |
 | Engine switch (Ollama / LM Studio) | Implemented; tested against stand-in servers only. Ollama is the only engine installed |
 | `stage_submissions.py` | Implemented (built from the other Claude account); not run in the 2026-10-30/31 sessions |
 | Teams and MySchool click-paths | Mapped by hand; the posting actions (Teams Return, MySchool save) are **not yet verified** |
 | `tools/spike_onenote_text.py` | **Typed page: passed (2026-10-31).** On one real typed page, the automated Chrome profile signed in, the script found OneNote's `#PageContentContainer` (3,271 characters, menus and navigation left out), detected no non-text elements in it, and Shingo confirmed by eye that every answer was there, in order, to the bottom of the page. **Not yet tested:** a page with a pasted image, a page with handwriting, a page with more than one text box, and moving between students unattended |
+| `tools/spike_teams_assignments.py` | **Run 2026-11-01 (one class, one assignment, four runs).** The assignment list, the roster's status text and the Student view (headings Instructions, Reference materials, My work, Points; instructions as text) are readable from the embedded frame; the frame appeared in about 2 seconds once polling used Playwright's own wait. No rubric heading appeared on that assignment. The first Student view run's output was truncated, so extraction is **not yet checked against the complete text**. Attachments, other list tabs, other statuses and other classes untested |
 | `skills/phase-b-upload/SKILL.md` | Draft, pilot mode; posting unverified |
 | Data contracts: manifest, name mapping, collection outcomes, approval record, posting states | **Proposed** (decided 2026-10-31); not built |
 | `collect.py`, vision fallback, `post_teams.py`, `post_myschool.py`, app buttons | **Proposed**; not built |
@@ -192,7 +195,7 @@ without code changes.
 
 | Step | From | Through | To |
 |---|---|---|---|
-| Phase A: collect | Class Notebook pages, Teams attachments, SharePoint and Canva links | Claude reads them in the browser pane (screenshots for OneNote) | Collected text, one file per student |
+| Phase A: collect | Class Notebook pages, Teams attachments, SharePoint and Canva links | Claude reads them in the browser pane (screenshots for OneNote; a script read one typed page as text in the 2026-10-31 spike, so screenshots now remain for handwriting, images and untested pages) | Collected text, one file per student |
 | Phase A: stage | Collected text | `stage_submissions.py` on the Mac, checked against `/api/roster` | Assessment folder |
 | Phase A: draft | Assessment folder | `feedback.py` batch, Ollama or LM Studio on the Mac | `<name>.feedback.md` drafts |
 | Stage 3: review | Drafts | Shingo edits; sets levels | Approved folder |
@@ -287,8 +290,8 @@ approval read the same record. Records hold no student data.
 - **Server guards:** saving needs a JSON request from the app's own page (`Content-Type: application/json`; any
   `Origin` must be the app's), bodies over 500 KB are refused, and record IDs must match `asg-[a-z0-9-]`.
 
-Not built yet: the read-only Teams picker, wiring the field buttons to it, Create draft in Teams, and refresh with
-change detection linked to the manifest, collection and approval (steps 3 to 6 in `WORKFLOW.md`).
+The read-only Teams picker is built as a first version (see "Read-only Teams reader" below) and has not yet been run end to end against live Teams. Not built yet: wiring the field buttons to it, Create draft in Teams, and refresh with
+change detection linked to the manifest, collection and approval (steps 4 to 6 in `WORKFLOW.md`).
 
 ## Assessment sessions (built 2026-10-31)
 
@@ -327,7 +330,64 @@ Not built: collection outcomes, the original captures, the class name mapping, d
 rest of the manifest described below), and a separate approval file. The approval is the teacher's own mark, kept with the
 session and validated by the server as above.
 
-## Data contracts (decided 2026-10-31; not built yet)
+## Background job queue
+
+Implemented for one job type: drafting feedback for a batch of students with the local model. `jobs.py` holds the queue;
+`app.py` supplies the draft handler and the `/api/jobs` routes; `ui/jobs.js` adds "Draft in the background" and a jobs
+panel to the Draft & review step.
+
+- **One worker thread, one job at a time, first in first out.** A second drafting job for the same assignment is refused
+  while one is queued, running or interrupted.
+- **Journal:** SQLite file `jobs.sqlite` in the app's Application Support folder: job ids, states, counts, times and short
+  error text only. No student names, work or feedback. The assessment record stays the session `manifest.json`; the
+  journal is progress and recovery only.
+- **Inputs and results** live in a sidecar `.jobs/<job id>.json` inside the assignment's Assessment folder (outside git),
+  including the student work and the finished drafts. A result is written to the sidecar before the journal marks the item
+  done, so a crash can repeat one item but never lose a finished one.
+- **States:** queued, running, completed, failed, cancelled, interrupted. If the app stops while a job runs, it comes back
+  as **interrupted** with unfinished items queued; nothing resumes by itself. The teacher chooses Resume; finished items
+  are not redone. Failed also resumes (for example Ollama wasn't running); the message names the fix. Cancel takes effect
+  between students, since a model call can't be interrupted. Cancelled jobs can't resume.
+- **Delivery to the page:** the page applies a finished draft only if the student's work is unchanged since the job was
+  queued (SHA-256 match) and, unless "Redraft" was ticked, the student has no feedback yet. Otherwise the draft is not
+  added and the page says so. Applied drafts are plain editable text with the instructions snapshot from queue time, so
+  later instruction edits flag them as outdated, and they still need the teacher's review before approval. Reopening the
+  assignment collects drafts written while the page was closed.
+- **Guards:** same Host, JSON and Origin checks as other writes; job ids and assignment ids are validated; a job's folder
+  must resolve inside Assessment.
+- **Not built:** browser-driven jobs (Teams read, collection, posting), sign-in pauses, a jobs view across assignments,
+  and per-student retry from the panel (use Generate feedback). Automated posting is still off.
+
+## Read-only Teams reader
+
+First version, built 2026-11-01; **not yet run end to end through the app against live Teams**. Evidence so far is
+`tools/spike_teams_assignments.py` on one class and one assignment.
+
+- **What it reads:** the Assignments list (title, due heading and time, Teams class name, two unlabelled fractions) and,
+  for one chosen assignment, the Student view (instructions, reference-material names, points) and the roster page's
+  aggregate status counts. Student names and per-student statuses are not read or kept in version 1.
+- **How:** `teams_read.py` runs in its own process (it needs Playwright and Chrome from the tools virtual environment),
+  started by a `teams_read` job on the existing queue. The Assignments app is an embedded frame
+  (`assignments.edu.cloud.microsoft`), so the script clicks the left-rail icon and reads inside that frame. Polling uses
+  Playwright's own wait; a plain sleep never sees the frame appear.
+- **Matching:** class and title together, exactly; zero or several matches stop the read and list the candidates.
+- **Source references returned with every read:** class id and assignment id (from the frame's address), the address,
+  the Teams class name, and the read time. They are saved on the assignment record under `teams.source`.
+- **Read-only guardrail:** the only clicks are the Assignments icon, one list row, the "..." menu button and the menu item
+  named exactly "Student view" (the same menu holds Edit, Mark as inactive, Export and Delete). Nothing is typed or
+  submitted. After each step the page is checked (right frame, address pattern, expected text); if it differs the read
+  stops with a plain message. This is a guardrail, not a guarantee.
+- **Browser profile:** one lock file (`browser.lock` in App Support) so two browser scripts never share the Chrome
+  profile; a second one reports "Browser profile in use". The OneNote and Teams spikes do not take this lock yet.
+- **Sign-in:** a Microsoft sign-in page leaves the job in `waiting_for_sign_in`; the teacher signs in in the Chrome window
+  and presses resume.
+- **Not built / not verified:** rubric extraction (none seen), attachments and reference materials (names only, never
+  opened), other list tabs (Returned, Drafts, Past due), other statuses than Viewed, Turned in and Not turned in, other
+  classes, and per-student statuses.
+
+## Data contracts (decided 2026-10-31; partly built)
+
+Built: the session manifest and the approval, in the form described under "Assessment sessions". Not built: the class name mapping per student, collection outcomes, original captures, posting states and run records.
 
 These sit around the teacher checkpoint, so collection and posting can be checked, resumed and audited.
 Nothing below is in git: it all lives in the Assessment folder on the Mac.

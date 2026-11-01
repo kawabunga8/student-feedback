@@ -267,8 +267,15 @@
   }
   const dlg = make('dialog', 'teams-dialog'); dlg.setAttribute('aria-label', 'Choose from Teams');
   dlg.innerHTML = `<h3>Choose from Teams</h3>
-    <p class="hint">Until the app can list your Teams assignments itself, copy the assignment from Teams and paste it here.
-      Nothing is changed in Teams.</p>
+    <p class="hint">The app can read your assignment list from Teams in its own Chrome window, or you can paste the assignment
+      yourself. Either way nothing is changed in Teams.</p>
+    <div class="teams-reader">
+      <div class="teams-actions"><button type="button" class="primary teams-list-btn">List my assignments</button>
+        <input class="teams-filter" aria-label="Filter the list by class or title" placeholder="Filter by class or title…" hidden>
+        <span class="status teams-job-msg" role="status"></span><span class="teams-job-actions"></span></div>
+      <div class="teams-list" role="list"></div>
+    </div>
+    <p class="hint"><b>Or paste it:</b></p>
     <ol class="hint"><li>In Teams, open the assignment and choose <b>Student view</b>.</li>
       <li>Click in the assignment, press <b>⌘A</b>, then <b>⌘C</b>.</li>
       <li>Click <b>Paste from clipboard</b>, or paste into the box below.</li></ol>
@@ -295,6 +302,65 @@
   dq('.teams-read').onclick = () => read();
   clsIn.addEventListener('input', () => { changingMatch = false; render(); });
   function renderClassList() { dq('#teams-classes').replaceChildren(...Object.keys(yearMap()).sort().map(c => new Option(c, c))); }
+  // ---- read from Teams (a background job; read-only). The result fills the same preview rows the paste does.
+  const tb = dq('.teams-list-btn'), tmsg = dq('.teams-job-msg'), tlist = dq('.teams-list'), tact = dq('.teams-job-actions'), tfilter = dq('.teams-filter');
+  let tItems = [];
+  const stopWait = () => { tb.disabled = false; };
+  async function follow(id, onDone) {
+    tact.replaceChildren(); tb.disabled = true;
+    for(;;) {
+      let j; try { j = (await (await fetch('/api/jobs/' + id)).json()).job; } catch(e) { await sleep(2000); continue; }
+      if(!j) { tmsg.textContent = 'The app lost track of that job.'; return stopWait(); }
+      if(j.state === 'queued' || j.state === 'running') { tmsg.textContent = 'Reading Teams… a Chrome window opens for this. If it asks you to sign in, do that there.'; await sleep(1500); continue; }
+      if(j.state === 'waiting_for_sign_in' || j.state === 'failed' || j.state === 'interrupted') {
+        tmsg.textContent = (j.state === 'waiting_for_sign_in' ? 'Waiting for you to sign in. ' : j.state === 'failed' ? 'Couldn’t read Teams: ' : 'Interrupted. ') + (j.error || '');
+        tact.append(button(j.state === 'waiting_for_sign_in' ? 'I’ve signed in: resume' : 'Try again', '', async () => {
+          const r = await postJSON('/api/jobs/' + id + '/resume', {}); if(r.error) { tmsg.textContent = r.error; return; } follow(id, onDone); }),
+          button('Cancel', '', async () => { await postJSON('/api/jobs/' + id + '/cancel', {}); tact.replaceChildren(); tmsg.textContent = 'Cancelled.'; stopWait(); }));
+        return stopWait();
+      }
+      if(j.state === 'cancelled') { tmsg.textContent = 'Cancelled.'; return stopWait(); }
+      stopWait();
+      const bad = (j.items || []).find(i => i.state === 'failed');
+      if(bad) { tmsg.textContent = 'Teams didn’t show what was expected: ' + bad.error; return; }
+      const res = ((j.drafts || [])[0] || {}).teams;
+      if(!res) { tmsg.textContent = 'Teams gave no result.'; return; }
+      return onDone(res);
+    }
+  }
+  async function startTeams(body, onDone) {
+    tmsg.textContent = 'Starting…'; tb.disabled = true;
+    let d; try { d = await postJSON('/api/jobs', {type:'teams_read', ...body}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(d.error) { tmsg.textContent = d.error; return stopWait(); }
+    return follow(d.job.id, onDone);
+  }
+  tb.onclick = () => startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length; renderTeamsList();
+    tmsg.textContent = tItems.length ? `Read ${tItems.length} assignments at ${when(res.read_at)}. Choose one to read.` : 'Teams showed no assignments.'; });
+  tfilter.addEventListener('input', renderTeamsList);
+  function renderTeamsList() {
+    const q = tfilter.value.trim().toLowerCase(), cls = clsIn.value.trim().toLowerCase();
+    const rows = tItems.filter(x => !q || (x.title + ' ' + x.class_name).toLowerCase().includes(q))
+      .sort((a, b) => (cls && b.class_name.toLowerCase() === cls) - (cls && a.class_name.toLowerCase() === cls)).slice(0, 60);
+    tlist.replaceChildren(...rows.map(x => {
+      const r = make('div', 'teams-item'); r.setAttribute('role', 'listitem');
+      const t = make('div'); t.append(make('strong', '', x.title), make('div', 'hint-inline', `${x.class_name} · ${x.due_heading ? x.due_heading + ', ' : ''}${x.due_text.replace(/^due\s*/i, 'due ')}` +
+        (x.fractions.length ? ` · Teams counts ${x.fractions.join(' and ')} (not labelled by Teams)` : '')));
+      r.append(t, button('Read this assignment', '', () => readOne(x)));
+      return r;
+    }));
+    if(!rows.length && tItems.length) tlist.append(make('div', 'hint-inline', 'Nothing matches that filter.'));
+  }
+  function readOne(x) {
+    return startTeams({op:'read', class:x.class_name, title:x.title}, res => {
+      const sv = res.student_view, rc = res.roster_counts;
+      parsed = {title:sv.title, due:sv.due, instructions:sv.instructions, referenceMaterials:sv.reference_materials || [], team:res.source.teams_class,
+                found:true, how:'read', source:res.source, counts:rc, sections:sv.sections_found, refsRead:!!sv.reference_materials_read};
+      clsIn.value = res.source.teams_class; paste.value = '';
+      tmsg.textContent = 'Read “' + sv.title + '” at ' + when(res.read_at) + '. Check the preview below against Teams before using it.';
+      render();
+    });
+  }
+  const sourceLabel = () => parsed && parsed.how === 'read' ? 'Teams (read by the app ' + when(parsed.source.read_at) + ')' : 'Teams (Student view, pasted)';
   function read() {
     parsed = paste.value.trim() ? parseTeams(paste.value) : null;
     if(parsed && parsed.team && !clsIn.value.trim()) clsIn.value = parsed.team;
@@ -316,16 +382,17 @@
   function noteTeams() {
     teams = {...(teams || {}), className:clsIn.value.trim() || (teams && teams.className) || '', importedAt:nowIso()};
     if(parsed) Object.assign(teams, {title:parsed.title, due:parsed.due, referenceMaterials:parsed.referenceMaterials,
-                                     imported:{title:parsed.title, instructions:parsed.instructions}});
+                                     imported:{title:parsed.title, instructions:parsed.instructions}},
+                             parsed.how === 'read' ? {source:parsed.source, statusCounts:parsed.counts, referenceMaterialsRead:false} : {});
     if(!design.teamsClass && teams.className) { design.teamsClass = teams.className; refreshers.forEach(f => f()); }
     updateBar();
   }
-  function useTitle() { setField('#atitle', parsed.title); mark('title', 'Teams (Student view, pasted)'); noteTeams(); }
+  function useTitle() { setField('#atitle', parsed.title); mark('title', sourceLabel()); noteTeams(); }
   function useInstructions(ask) {
     const cur = splitRubric($('#rubric').value);
     if(ask && cur.instructions && cur.instructions !== parsed.instructions &&
        !confirm('Replace the instructions in Setup with the ones from Teams?' + (cur.focus.length ? ' Your teacher-only feedback focus is kept.' : ''))) return false;
-    setField('#rubric', composeRubric(parsed.instructions, cur.focus)); mark('instructions', 'Teams (Student view, pasted)'); noteTeams(); return true;
+    setField('#rubric', composeRubric(parsed.instructions, cur.focus)); mark('instructions', sourceLabel()); noteTeams(); return true;
   }
   function courseRow() {
     const cls = clsIn.value.trim(), extras = [];
@@ -379,10 +446,17 @@
         parsed.title && curTitle !== parsed.title ? button('Use', '', () => { useTitle(); render(); }) : null));
       if(parsed.due) rows.push(row('due', 'Due', parsed.due, [hintEl('For reference: the due date stays in Teams.')]));
       const refs = parsed.referenceMaterials.length
-        ? hintEl('Reference materials (kept separate, not added to the instructions): ' + parsed.referenceMaterials.join('; ')) : null;
+        ? hintEl('Reference materials, listed by name only (not opened or read, and not added to the instructions): ' + parsed.referenceMaterials.join('; ')) : null;
       rows.push(row('instructions', 'Instructions', parsed.instructions ? clip(parsed.instructions, 240) + '  (' + parsed.instructions.length + ' characters)' : '',
         [hintEl(compare(cur, parsed.instructions)), refs],
         parsed.instructions && cur !== parsed.instructions ? button('Use', '', () => { if(useInstructions(true)) render(); }) : null));
+    }
+    if(parsed && parsed.how === 'read') {
+      const c = parsed.counts || {}, st = c.statuses || {}, total = (c.to_return || 0) + (c.returned || 0);
+      rows.push(row('counts', 'Status counts', total ? total + ' students: ' + Object.entries(st).map(([k, v]) => v + ' ' + k.toLowerCase()).join(', ') + (c.returned ? ', ' + c.returned + ' returned' : '') : 'Not read',
+        [c.consistent === false ? hintEl('The rows didn’t add up to the “results found” line Teams showed. Don’t rely on these counts.', 'teams-now warn') : hintEl('Counts only: no student names or per-student statuses are read yet.')]));
+      rows.push(row('source', 'Source', 'Class ' + parsed.source.class_id.slice(0, 8) + '…, assignment ' + parsed.source.assignment_id.slice(0, 8) + '…',
+        [hintEl('Read ' + when(parsed.source.read_at) + ' from Teams Assignments. Sections found: ' + (parsed.sections || []).join(', ') + '. Rubric: no separate rubric section was shown; any assessment descriptors are inside the instructions.')]));
     }
     rows.push(courseRow(), gradeRow());
     results.replaceChildren(...rows);
