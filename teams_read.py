@@ -148,6 +148,26 @@ def parse_student_view(text):
             "found": due_at >= 0 and idx["Instructions"] >= 0}
 
 
+def url_path(url):
+    """The path of an address without its ?query or #fragment, and without a trailing slash."""
+    return re.split(r"[?#]", url or "", 1)[0].rstrip("/")
+
+
+def is_preview_url(url):
+    return url_path(url).endswith("/preview")
+
+
+def is_review_url(url):
+    return "/assignment-review/" in url_path(url) + "/"
+
+
+def url_shape(url):
+    """An address with ids masked and the query dropped, safe to show in an error or log."""
+    path = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<id>", url_path(url))
+    path = re.sub(r"^https?://[^/]+", "", path)
+    return path + (" (+query)" if "?" in (url or "") else "") + (" (+fragment)" if "#" in (url or "") else "")
+
+
 def ids_from_url(url):
     """Class id and assignment id from an Assignments frame address."""
     m = re.search(r"/classes/([0-9a-f-]{36})/(?:assignment-review|assignments)/([0-9a-f-]{36})", url or "")
@@ -271,10 +291,19 @@ class Session:
             raise ReadError("differs", "The assignment was in the list text but its row couldn't be found to open.")
         self.click("list-row", hit.get_by_text(want["title"], exact=True).first)
         t = self.wait_for("roster", lambda t: want["title"] in t and bool(re.search(r"\d+ results? found", t)))
-        ids = ids_from_url(self.frame().url)
-        if not ids["assignment_id"] or "assignment-review" not in self.frame().url:
-            raise ReadError("differs", "The roster page's address isn't the expected assignment-review address.")
-        return want, t, ids
+        # The text can appear before the frame's address settles (the list page's text may still be on screen), so
+        # wait on the address too, then re-read the text so counts come from the settled page.
+        end = time.time() + 20
+        while time.time() < end and not is_review_url(self.frame().url):
+            self.page.wait_for_timeout(500)
+        url = self.frame().url
+        self.note("roster address shape: " + url_shape(url))
+        ids = ids_from_url(url)
+        if not ids["assignment_id"] or not is_review_url(url):
+            raise ReadError("differs", "The roster page's address isn't the expected assignment-review address (shape seen: " +
+                            url_shape(url) + ").", {"log": self.log})
+        t2 = self.text()
+        return want, (t2 if want["title"] in t2 and re.search(r"\d+ results? found", t2) else t), ids
 
     def student_view(self, title):
         f = self.frame()
@@ -288,9 +317,17 @@ class Session:
         t = self.wait_for("student view", lambda t: "preview of what this assignment" in t.lower() or ("Instructions" in t and "Points" in t))
         if len(self.page.context.pages) != before:
             raise ReadError("differs", "Student view opened in a new tab, which this reader doesn't expect.")
-        if not self.frame().url.rstrip("/").endswith("/preview"):
-            raise ReadError("differs", "Student view's address doesn't end in /preview.")
-        return t
+        # The page text can look right a moment before the address settles, and the address may carry a query or
+        # fragment, so wait on the path itself (ignoring ?query and #fragment) before giving up.
+        end = time.time() + 20
+        while time.time() < end and not is_preview_url(self.frame().url):
+            self.page.wait_for_timeout(500)
+        url = self.frame().url
+        self.note("student view address shape: " + url_shape(url))
+        if not is_preview_url(url):
+            raise ReadError("differs", "Student view's address doesn't end in /preview (shape seen: " + url_shape(url) + ").",
+                            {"log": self.log})
+        return self.text() or t
 
 
 def _launch(p, headless=False):

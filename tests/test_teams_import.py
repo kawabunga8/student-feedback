@@ -116,6 +116,13 @@ with sync_playwright() as p:
     check("7 preview: name, instructions, counts, source", any("Assignment name Task A: Build & Share" in x for x in rows) and any("Status counts 6 students: 4 viewed" in x for x in rows) and any("Source Class 11111111" in x for x in rows), rows)
     check("  reference materials listed by name, marked not read", any("listed by name only (not opened or read" in x and "Sample deck.pptx" in x for x in rows))
     check("  instructions exclude the reference material and the AI widget", "flashcards" not in pg.evaluate("document.querySelector('.teams-row[data-key=instructions]').innerText"))
+    tog = pg.locator(".teams-row[data-key=instructions] button[aria-expanded]")
+    full = T.parse_student_view(SV)["instructions"]
+    check("  long instructions get a show-full control (collapsed by default)", tog.count() == 1 and tog.get_attribute("aria-expanded") == "false" and "…" in pg.inner_text(".teams-row[data-key=instructions] .teams-val > span"))
+    tog.click()
+    check("  expanded view shows the complete instructions", pg.inner_text(".teams-row[data-key=instructions] .teams-val > span") == full and tog.get_attribute("aria-expanded") == "true")
+    tog.click()
+    check("  and collapses again", "…" in pg.inner_text(".teams-row[data-key=instructions] .teams-val > span"))
     check("  no student names in the preview", not any("Test, " in x or "Alpha" in x for x in rows))
     check("  class filled in; no rubric invented", pg.input_value(".teams-class") == "RCS - H - Q1 ICT 9 [2026-27]" and any("no separate rubric section" in x for x in rows))
     check("  read-only: the runner was asked only to list and read", {c[0] for c in calls if c[0] != "signed"} <= {"list", "read"} and ("read", "RCS - H - Q1 ICT 9 [2026-27]", "Task A: Build & Share") in calls, calls[-3:])

@@ -583,6 +583,6 @@ connected through the desktop app.
 
 ## Running the automated tests
 
-`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (232 checks in 8 files when last run in the cloud copy). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
+`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (239 checks in 8 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
 
 The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). These results have not yet been reproduced on your Mac. See `tests/README.md`.

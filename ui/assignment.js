@@ -447,9 +447,22 @@
       if(parsed.due) rows.push(row('due', 'Due', parsed.due, [hintEl('For reference: the due date stays in Teams.')]));
       const refs = parsed.referenceMaterials.length
         ? hintEl('Reference materials, listed by name only (not opened or read, and not added to the instructions): ' + parsed.referenceMaterials.join('; ')) : null;
-      rows.push(row('instructions', 'Instructions', parsed.instructions ? clip(parsed.instructions, 240) + '  (' + parsed.instructions.length + ' characters)' : '',
+      const insRow = row('instructions', 'Instructions', parsed.instructions ? clip(parsed.instructions, 240) + '  (' + parsed.instructions.length + ' characters)' : '',
         [hintEl(compare(cur, parsed.instructions)), refs],
-        parsed.instructions && cur !== parsed.instructions ? button('Use', '', () => { if(useInstructions(true)) render(); }) : null));
+        parsed.instructions && cur !== parsed.instructions ? button('Use', '', () => { if(useInstructions(true)) render(); }) : null);
+      if(parsed.instructions && parsed.instructions.length > 240) {      // so the whole text can be compared with Teams
+        const span = insRow.querySelector('.teams-val > span'), short = span.textContent, n = parsed.instructions.length;
+        const tog = make('button', 'linkish', 'Show full instructions'); tog.type = 'button'; tog.setAttribute('aria-expanded', 'false');
+        tog.onclick = () => {
+          const open = tog.getAttribute('aria-expanded') !== 'true';
+          tog.setAttribute('aria-expanded', String(open));
+          tog.textContent = open ? 'Show less' : 'Show full instructions';
+          span.textContent = open ? parsed.instructions : short;
+          span.classList.toggle('teams-full', open);
+        };
+        span.after(make('br'), tog);
+      }
+      rows.push(insRow);
     }
     if(parsed && parsed.how === 'read') {
       const c = parsed.counts || {}, st = c.statuses || {}, total = (c.to_return || 0) + (c.returned || 0);

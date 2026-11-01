@@ -55,4 +55,11 @@ u="https://assignments.example.test/classes/11111111-2222-4333-8444-555555555555
 u2="https://assignments.example.test/classes/11111111-2222-4333-8444-555555555555/assignments/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/preview"
 check("5 ids from the roster and preview addresses agree", T.ids_from_url(u)==T.ids_from_url(u2) and T.ids_from_url(u)["assignment_id"].startswith("aaaaaaaa"))
 check("  no ids from other addresses", T.ids_from_url("https://x/classes/all/list")=={"class_id":"","assignment_id":""})
+pv="https://assignments.example.test/classes/11111111-2222-4333-8444-555555555555/assignments/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/preview"
+check("6 preview address: plain, trailing slash, query and fragment all count", all(T.is_preview_url(x) for x in (pv, pv+"/", pv+"?a=1", pv+"#top", pv+"/?a=1#x")))
+check("  roster address and other pages are not the preview", not T.is_preview_url(u) and not T.is_preview_url("") and not T.is_preview_url(pv+"/edit"))
+sh=T.url_shape(pv+"?token=SECRET#x")
+check("  address shape masks ids and drops the query value", "<id>" in sh and "SECRET" not in sh and "11111111" not in sh and sh.startswith("/classes/<id>/assignments/<id>/preview"), sh)
+rv=u.split("?")[0]
+check("  roster address: review path counts (query ok); preview, list and empty do not", T.is_review_url(rv) and T.is_review_url(u) and not T.is_review_url(pv) and not T.is_review_url("https://assignments.example.test/classes/all/list") and not T.is_review_url(""))
 print(f"\n{sum(ok)}/{len(ok)} passed"); sys.exit(0 if all(ok) else 1)
