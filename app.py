@@ -523,6 +523,8 @@ TOOLS_PYTHON = Path.home() / ".venvs" / "student-feedback-tools" / "bin" / "pyth
 def teams_runner(op, cls="", title=""):
     """Run teams_read.py in its own process (it needs Playwright, which lives in the tools venv, and a Chrome window)
     and return its JSON answer. Tests replace this function."""
+    if os.environ.get("SF_FORBID_BROWSER"):      # set by the tests: they must never reach Teams
+        return {"ok": False, "kind": "setup", "error": "Browser use is switched off (SF_FORBID_BROWSER is set)."}
     py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
     cmd = [py, str(HERE / "teams_read.py"), op] + (["--class", cls, "--title", title] if op == "read" else [])
     try:

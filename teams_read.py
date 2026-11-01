@@ -294,6 +294,8 @@ class Session:
 
 
 def _launch(p, headless=False):
+    if os.environ.get("SF_FORBID_BROWSER"):      # set by the tests: they must never open a browser profile
+        raise ReadError("setup", "Browser use is switched off (SF_FORBID_BROWSER is set).")
     try:
         return p.chromium.launch_persistent_context(str(PROFILE), channel="chrome", headless=headless,
                                                    viewport={"width": 1440, "height": 900})
