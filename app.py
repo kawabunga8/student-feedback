@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import feedback as fb
 import hashlib
 import sys
+import onenote_read    # one typed OneNote page; the browser part is started in its own process
 import teams_read      # parsers and validators only; the browser part is started in its own process
 import jobs
 
@@ -626,6 +627,63 @@ def enqueue_teams_job(body):
 
 TEAMS_RUNNER = teams_runner
 
+def onenote_runner(url, wait=60):
+    """Run onenote_read.py in its own process (same reasons as teams_runner) and return its JSON answer. Tests replace
+    this function. The answer holds student work: it is written only to the job's sidecar, never printed or logged."""
+    if os.environ.get("SF_FORBID_BROWSER"):      # set by the tests: they must never reach OneNote
+        return {"ok": False, "kind": "setup", "error": "Browser use is switched off (SF_FORBID_BROWSER is set)."}
+    py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
+    try:
+        r = subprocess.run([py, str(HERE / "onenote_read.py"), "collect", "--url", url, "--wait", str(wait)],
+                           capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "kind": "error", "error": "Reading the OneNote page took longer than 15 minutes and was stopped."}
+    last = next((l for l in reversed((r.stdout or "").strip().splitlines()) if l.startswith("{")), "")
+    try:
+        return json.loads(last)
+    except ValueError:      # stderr could hold page text in a crash trace, so it is not copied into the message
+        return {"ok": False, "kind": "setup" if r.returncode == 3 else "error",
+                "error": f"The OneNote reader gave no answer (exit code {r.returncode})."}
+
+
+def _run_onenote_job(queue, job):
+    """Read one OneNote page (read-only). A sign-in page leaves the job waiting for the teacher. The page text is the
+    result and goes to the sidecar in the assignment's own Assessment folder."""
+    req = queue.request_of(job)["request"]
+    nxt = queue.next_item(job["id"])
+    if not nxt:
+        return
+    out = ONENOTE_RUNNER(req["url"])
+    kind = out.get("kind", "")
+    if out.get("ok"):
+        queue.item_finished(job, nxt["idx"], nxt["key"], "done", result={"collect": out})
+    elif kind == "sign_in":
+        raise jobs.NeedsSignIn(out.get("error", "Sign in to Microsoft in the Chrome window, then resume."))
+    elif kind in ("busy", "setup", "blocked"):
+        raise jobs.JobFailed(out.get("error", "The OneNote reader couldn't start."))
+    else:
+        queue.item_finished(job, nxt["idx"], nxt["key"], "failed", error=str(out.get("error", "Failed"))[:300],
+                            result={"collect": {k: out[k] for k in ("kind", "error", "log") if k in out}})
+
+
+def enqueue_onenote_job(body):
+    if QUEUE is None:
+        raise RuntimeError("The job worker isn't running.")
+    aid = str(body.get("assignment", ""))
+    rec = load_assignment_record(aid)            # student work is stored with an assignment, so it must be saved first
+    rel, _ = session_folder(aid, rec)
+    url = str(body.get("url", "")).strip()
+    try:
+        onenote_read.check_url(url)
+    except teams_read.ReadError as e:
+        raise ValueError(str(e))
+    if any(j["state"] in ("queued", "running", "waiting_for_sign_in") for j in QUEUE.list_for(aid, 20) if j["type"] == "onenote_read"):
+        raise ValueError("A OneNote read for this assignment is already queued, running or waiting for you to sign in.")
+    return QUEUE.enqueue("onenote_read", aid, rel, {"url": onenote_read.read_only(url)}, [{"key": "collect", "work_sha": ""}])
+
+
+ONENOTE_RUNNER = onenote_runner
+
 
 def start_worker():
     """Create the job queue (journal in App Support) and start its worker. Call once, when the app starts."""
@@ -639,7 +697,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"draft": _run_draft_job, "teams_read": _run_teams_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 
@@ -1371,7 +1429,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Stopped after " + i + " students. Existing drafts remain available." : failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -1398,7 +1456,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -1529,7 +1587,7 @@ class Handler(BaseHTTPRequestHandler):
                                                 "conflict": True, "current": c.current})
                 if self.path.startswith("/api/jobs"):
                     if self.path == "/api/jobs":
-                        enqueue = enqueue_teams_job if body.get("type") == "teams_read" else enqueue_draft_job
+                        enqueue = {"teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job}.get(body.get("type"), enqueue_draft_job)
                         return self._send(200, {"job": _job_view(enqueue(body))})
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:

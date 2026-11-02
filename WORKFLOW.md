@@ -589,9 +589,9 @@ connected through the desktop app.
 
 ## Running the automated tests
 
-`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (320 checks in 10 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
+`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (392 checks in 11 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
 
-The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). All 320 checks in 10 files passed on the Mac on 2026-11-01. See `tests/README.md`.
+The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). All 392 checks in 11 files passed on the Mac on 2026-11-01. See `tests/README.md`.
 
 ## Live no-rubric regression: 2026-11-01
 
@@ -600,3 +600,31 @@ Re-read Task 4: Make & Skills through the app with the rubric reader enabled. No
 ## Local-model rubric drafting trial: 2026-11-01
 
 All 320 synthetic checks passed locally. A direct Qwen2.5 14B trial used one invented submission with the captured teacher rubric enabled and disabled; no student records were changed. Both drafts completed. The rubric-enabled draft named Skills and Make but included “move toward proficiency”, which the current level-word check did not reject, and introduced an explanation expectation not explicit in the supplied task. Rubric drafting remains a prototype requiring teacher review. Follow-up: add this failure as a regression case, strengthen the level-word check and repeat the trial.
+
+## Collect student work, version 1 (prototype): 2026-11-01
+
+Built and tested on synthetic pages only; not yet run against a real notebook page through the app.
+
+What it does: Collect step > OneNote card > "Collect from OneNote…". The teacher pastes the address of ONE student's typed Class Notebook page (https, sharepoint.com, Doc.aspx). A background job (`onenote_read`) opens it read-only (`action=view`) in the shared automated Chrome profile, scrolls it top to bottom and back, and reads the text of OneNote's own page area. The preview shows the student-name hint (from the address, editable), page, size, an UNVERIFIED completeness note, and the non-text items found (images, drawings, files, frames: listed, not read). "Add as a student card" fills an empty card for that name or adds one. The text is shown in full only when asked.
+
+Guardrails: read-only (no typing, no clicks; the page is only opened and scrolled); the shared browser lock ("browser profile in use"); stops, returning nothing, if OneNote's page area is not found (it never falls back to whole-frame text, which would include menus); a sign-in page leaves the job "waiting for sign-in"; AADSTS policy blocks are reported as blocked. Student text goes only to the job's sidecar in the assignment's own Assessment folder (`.jobs/`), never to the journal, logs or error messages. The assignment must be saved first.
+
+Known limits of version 1: one page per run; typed text only; handwriting and pictures are not read (listed when detected); multi-box pages untested; pages with very little text may be refused (the reader waits for the frame to hold at least 200 characters); task wording on the page is not separated from the student's work; the source reference (address, read time) is shown in the preview but not saved on the card; the text stays in the job sidecar after delivery. Text extraction was verified live earlier on one real typed page (tools/spike_onenote_text.py); the app path has not been.
+
+Tests: tests/test_onenote_collect.py (63 checks): address checks, read-only address, page identity, text cleaning; run() against synthetic pages (no clicks or key events reach the page, menus excluded, image listed as not read, area-missing, empty, sign-in, redirect, AADSTS stops); job type, folders and privacy; the dialog. Whole suite: 392 checks in 11 files, passed locally on 2026-11-01.
+
+### Collection preview assignment guard (2026-11-01)
+
+The collection dialog binds each preview to its assignment. Switching assignments clears the preview and ignores late responses; Add checks the assignment again. Returning to the original assignment can recover its undelivered result. The collector suite passed 63/63 checks locally, including three assignment-switch regressions. The earlier full local run had 379 passing checks and one transient Failed to fetch page error; the collector rerun passed before this change too. The final full suite passed locally: 392 checks in 11 files.
+
+### Intended Teams class picker (2026-11-01)
+
+The Design context uses a select instead of a placeholder-only text box. It fills a unique confirmed class match for the selected Course Hub course and school year, offers multiple confirmed matches for selection, and clears a known class belonging to another course. With no match it offers Choose class from Teams through the existing read-only import/mapping dialog. Saved unconfirmed class text remains visible as such. All 69 assignment-record UI checks passed locally, including four new picker/course-switch checks; no JavaScript errors. The final full suite also passed locally (392 checks in 11 files).
+
+### Forms quiz submission type (2026-11-01)
+
+Design → Submission setup now offers Microsoft Forms quiz. The existing assignment design record persists this type. Student instructions direct students to the quiz linked in Teams, with Submit in Microsoft Forms as the default completion action. Notebook and attachment fields are hidden for this type; custom completion wording is preserved. A teacher-only note explains that Forms-to-Excel response import is not implemented. JavaScript syntax and diff whitespace checks passed; no live Forms extraction is included.
+
+### Final local regression run (2026-11-01)
+
+392 checks passed in 11 files, zero failed, using installed Chrome and synthetic data. Forms selection, hidden fields, completion wording, student-preview instructions and restoring Both/Notebook are covered. The strengthened collector isolation assertion verifies that the original read stays offered while the other assignment has no job. The earlier transient Failed to fetch page error did not recur. Live OneNote collection through the app remains unverified; Forms response import remains unbuilt.

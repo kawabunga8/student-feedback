@@ -20,8 +20,8 @@
   collect.append(make('p', 'hint', 'Load saved work or upload files, then check each student match in Draft & review.'));
   const imports = make('div', 'card import-tools'); collect.append(imports);
   ['addall','files','filepick','split','assess'].forEach(id => imports.append(document.getElementById(id)));
-  const notebook = make('div', 'card');
-  notebook.innerHTML = '<h3>OneNote collection</h3><span class="badge">Manual test available</span><p>The local browser test can read a notebook page. Automatic class collection and vision transcription are not connected yet.</p><p>Continue using saved Assessment files or upload collected work above.</p>';
+  const notebook = make('div', 'card onenote-card');
+  notebook.innerHTML = '<h3>OneNote collection</h3><span class="badge">Prototype: one typed page at a time</span><p>Paste the address of one student\u2019s typed OneNote page and the app reads it, read-only. Whole-class collection, handwriting and pictures are not connected yet.</p><p>You can still use saved Assessment files or upload collected work above.</p>';
   collect.append(notebook);
   const review = panels[3];
   const toolbar = make('div', 'review-toolbar'); review.append(toolbar);

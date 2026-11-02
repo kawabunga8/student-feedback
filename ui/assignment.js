@@ -433,7 +433,7 @@
       let d; try { d = await postJSON('/api/class-map', {schoolYear:schoolYear(), className:cls, course:courseKey(sel.value)}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
       if(d.error) { msg.textContent = 'Match not saved: ' + d.error; return; }
       classMap = d.map || classMap; changingMatch = false; renderClassList();
-      applyCourseValue(sel.value, 'Course Hub (match you confirmed)'); noteTeams();
+      applyCourseValue(sel.value, 'Course Hub (match you confirmed)'); noteTeams(); syncClassPicker();
       msg.textContent = 'Saved: ' + cls + ' → ' + optionText(sel.value) + ' for ' + schoolYear() + '.'; render();
     });
     return row('course', 'Course', null, extras, confirmBtn);
@@ -569,16 +569,36 @@
   const ctx = card('Context', 'The same fields as Setup.');
   const ctxGrid = make('div', 'design-grid'); ctx.append(ctxGrid);
   const dTitle = field(ctxGrid, 'Assignment name', input('e.g. Task 3: Prototype & Test'));
-  const dClass = bind(field(ctxGrid, 'Intended Teams class', input('RCS - … [2026-27]')), () => design.teamsClass, v => design.teamsClass = v);
-  dClass.setAttribute('list', 'teams-classes');
+  const dClass = field(ctxGrid, 'Intended Teams class', make('select'));
+  dClass.id = 'design-teams-class';
+  const classHint = make('p', 'hint');
+  const classFind = button('Choose class from Teams…', '', () => openTeams('course'));
+  dClass.after(classHint, classFind);
+  function syncClassPicker() {
+    const value = $('#course').value;
+    const matches = Object.keys(yearMap()).filter(cls => value !== '' && courseValueFor(yearMap()[cls]) === value).sort();
+    let selected = design.teamsClass || '';
+    // A known class belonging to another course must not follow a course switch.
+    if(selected && yearMap()[selected] && !matches.includes(selected)) selected = '';
+    if(!selected && matches.length === 1) selected = matches[0];
+    dClass.replaceChildren(new Option(matches.length ? 'Choose the Teams class…' : 'No confirmed Teams class for this course', ''));
+    matches.forEach(cls => dClass.add(new Option(cls, cls)));
+    if(selected && !matches.includes(selected)) dClass.add(new Option(selected + ' (saved; match not confirmed)', selected));
+    dClass.value = selected; design.teamsClass = selected;
+    classHint.textContent = matches.length === 1 ? 'Filled from your confirmed Course Hub → Teams match.'
+      : matches.length > 1 ? 'Several Teams classes match this course. Choose the intended class.'
+      : 'Choose the class from Teams and confirm its Course Hub match. The app will remember it.';
+  }
+  dClass.addEventListener('change', () => { design.teamsClass = dClass.value; changed(); });
   const dCourse = field(ctxGrid, 'Course (Course Hub)', make('select')), dGrade = field(ctxGrid, 'Grade', make('select'));
   const dTerm = field(ctxGrid, 'Term', make('select'));
   function syncMirrors() {
     const clone = (to, from) => { to.replaceChildren(...[...$(from).children].map(n => n.cloneNode(true))); to.value = $(from).value; };
-    dTitle.value = $('#atitle').value; clone(dCourse, '#course'); clone(dGrade, '#grade'); clone(dTerm, '#quarter'); clone(dLength, '#length');
+    dTitle.value = $('#atitle').value; clone(dCourse, '#course'); clone(dGrade, '#grade'); clone(dTerm, '#quarter'); clone(dLength, '#length'); syncClassPicker();
   }
   const mirror = (el, sel, after) => el.addEventListener('change', () => { $(sel).value = el.value; fire($(sel), 'change'); syncMirrors(); if(after) after(); changed(); });
   dTitle.addEventListener('input', () => { $('#atitle').value = dTitle.value; fire($('#atitle'), 'input', 'change'); changed(); });
+  $('#course').addEventListener('change', () => { syncClassPicker(); });
   mirror(dCourse, '#course', () => renderCriteria()); mirror(dGrade, '#grade'); mirror(dTerm, '#quarter', () => renderCriteria());
 
   // Student task
@@ -622,13 +642,22 @@
   // Submission setup
   const sub = card('Submission setup', null, 'student');
   const subGrid = make('div', 'design-grid'); sub.append(subGrid);
-  const dType = bind(field(subGrid, 'Students submit', select([['notebook', 'On a Class Notebook page'], ['teams', 'A file or link in Teams'], ['both', 'Both']])),
+  const dType = bind(field(subGrid, 'Students submit', select([['notebook', 'On a Class Notebook page'], ['teams', 'A file or link in Teams'], ['both', 'Both'], ['forms', 'Microsoft Forms quiz']])),
     () => design.submission.type, v => design.submission.type = v);
   const dSection = bind(field(subGrid, 'Notebook section', input('Homework')), () => design.submission.section, v => design.submission.section = v);
   const dPage = bind(field(subGrid, 'Notebook page title', input('Same as the assignment name'), '(distribute the page so every copy has this title)'),
     () => design.submission.page, v => design.submission.page = v);
   const dFiles = bind(field(subGrid, 'Required files', input('e.g. one PDF, or a link to your project')), () => design.submission.files, v => design.submission.files = v);
-  bind(field(sub, 'How students show they’re done', input("When you're finished, click Turn in in Teams.")), () => design.submission.completion, v => design.submission.completion = v);
+  const dCompletion = bind(field(sub, 'How students show they’re done', input("When you're finished, click Turn in in Teams.")), () => design.submission.completion, v => design.submission.completion = v);
+
+  const formsNote = make('p', 'hint', 'Teacher: export quiz responses from Microsoft Forms to Excel. Forms response import is not built yet; selecting this type only saves the submission setup.');
+  sub.append(formsNote);
+  dType.addEventListener('change', () => {
+    const teamsDone = "When you're finished, click Turn in in Teams.", formsDone = 'Complete the quiz and click Submit in Microsoft Forms.';
+    if(design.submission.type === 'forms' && design.submission.completion === teamsDone) design.submission.completion = formsDone;
+    else if(design.submission.type !== 'forms' && design.submission.completion === formsDone) design.submission.completion = teamsDone;
+    dCompletion.value = design.submission.completion; changed();
+  });
 
   // Feedback setup (teacher only)
   const fb = card('Feedback setup', 'Used for drafting feedback and the MySchool comment. None of this is copied for Teams.', 'teacher');
@@ -673,8 +702,9 @@
     if(lines(d.evidence).length) parts.push('What to hand in:\n' + lines(d.evidence).map(x => '- ' + x).join('\n'));
     const page = s.page.trim() || $('#atitle').value.trim();
     const where = [];
-    if(s.type !== 'teams') where.push('Class Notebook → ' + (s.section.trim() || 'Homework') + ' → "' + (page || 'the page your teacher sent') + '". Use the page your teacher sent you and keep its title.');
-    if(s.type !== 'notebook') where.push('attach your work to this assignment in Teams' + (s.files.trim() ? ' (' + s.files.trim() + ')' : '') + '.');
+    if(['notebook', 'both'].includes(s.type)) where.push('Class Notebook → ' + (s.section.trim() || 'Homework') + ' → "' + (page || 'the page your teacher sent') + '". Use the page your teacher sent you and keep its title.');
+    if(['teams', 'both'].includes(s.type)) where.push('attach your work to this assignment in Teams' + (s.files.trim() ? ' (' + s.files.trim() + ')' : '') + '.');
+    if(s.type === 'forms') where.push('complete the Microsoft Forms quiz linked in this Teams assignment.');
     parts.push('Where to submit: ' + where.join(' Also ') + (s.completion.trim() ? '\n' + s.completion.trim() : ''));
     if(crits.length) parts.push('Success criteria:\n' + crits.map(c => '- ' + c.text.trim()).join('\n'));
     const shows = crits.filter(c => c.evidence.trim());
@@ -728,8 +758,9 @@
     critNote.classList.toggle('warn', !crits.length);
     const long = lines(d.feedback.mustAddress).filter(x => words(x) > 8);
     focusNote.textContent = long.length ? 'Over 8 words, so drafts can’t be checked for: ' + long.map(x => '“' + x + '”').join(', ') : '';
-    dSection.closest('.d-field').hidden = dPage.closest('.d-field').hidden = d.submission.type === 'teams';
-    dFiles.closest('.d-field').hidden = d.submission.type === 'notebook';
+    dSection.closest('.d-field').hidden = dPage.closest('.d-field').hidden = !['notebook', 'both'].includes(d.submission.type);
+    dFiles.closest('.d-field').hidden = !['teams', 'both'].includes(d.submission.type);
+    formsNote.hidden = d.submission.type !== 'forms';
     dPage.placeholder = $('#atitle').value.trim() || 'Same as the assignment name';
     const setupIns = splitRubric($('#rubric').value).instructions;
     syncNote.textContent = !has ? 'No design yet.' + (setupIns ? ' This assignment’s instructions are in Setup (for example, imported from Teams): start from them, or leave the design empty.' : '')
