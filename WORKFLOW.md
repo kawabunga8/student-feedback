@@ -1,9 +1,30 @@
 # Assessment Workflow — plan
 
-## For a new session/agent picking this up
+## Current prototype status — 2026-11-02
 
-Read this doc fully before doing anything, then jump straight to **"What to
-build next"** near the bottom — it's the current punch list, kept up to date.
+Build small working prototypes, verify one real case, then refine. The dated logs below preserve earlier states; this summary is the current starting point.
+
+| Capability | Built and verification scope |
+|---|---|
+| Assignment design, Course Hub context, saved sessions and approvals | Built; server rechecks approvals and edits invalidate review. Teacher chooses every level. |
+| Background drafting and optional Teams rubric | Built. Real Qwen2.5 14B benchmark accepted 2/7 invented cases, neither first try; missing criterion names blocked five. Criterion-by-criterion reliability needs refinement. |
+| Teams assignment/rubric reader | Wording/counts verified on Task 4 and Graphics Design Challenge; rubric descriptors verified on the latter only. Attachments are listed, not read. |
+| Typed OneNote collection | One short typed page verified through the app, including save/reopen. Up to 40 pasted page addresses and roster matching are built and synthetic-tested; broader live collection is unverified. |
+| Forms file import | One real English quiz export verified through parser and temporary upload UI: one response, 11 question blocks, score separate and no level assigned. Direct Forms web import and image/file answers are not built. |
+| Per-student Teams statuses and Class overview | Built; synthetic-tested. Statuses are assignment-bound. Overview completion reflects manual posting ticks, not independent destination verification. |
+| One-student Teams posting | Preview, explicit confirmation, Return and read-back built. Controls inspected live read-only; no live posting/notification behaviour verified. |
+| One-student MySchool posting | One or several teacher-selected criterion levels, preview, explicit Save and read-back built. No live save verified; publishing is preserved. |
+| Image transcription and transcription benchmark | Built; synthetic-tested only. PNG/JPEG to a local Ollama vision model; teacher edits and roster-matches the text. Not automatic OneNote image capture. Image previews still need an assignment-switch guard before normal use. |
+
+Mandatory review remains in place. Bulk automated posting stays disabled. Quality reports, raw exports, student work and staging folders must stay out of commits.
+
+**Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
+
+**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; add the image-preview assignment guard; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
+
+## Historical handoff notes (2026-10-30)
+
+Use the current prototype summary above for the active punch list. The following notes describe the earlier build.
 Status as of the evening of 2026-10-30: item 6 (verify the posting
 actions) is in progress; see "Session log: 2026-10-30, RCS account" below.
 One test student's ICT 9 Task 2 work and the Task 2 instructions from Teams
@@ -654,3 +675,46 @@ Passed for one typed Stage 4 page in the ICT 9 Q1 notebook, collected under the 
 Added a wording check for scale levels described as destinations, including the real-trial phrase “move toward proficiency” and variants using toward/towards, approach, reach, achieve, attain, become, aim and progress. Ordinary actions such as developing ideas and extending a melody remain allowed; quoted student evidence follows the existing quotation exemption. The system prompt tells the model to describe the specific improvement instead. Persistent violations are rejected after retries, with or without a Teams rubric. This remains a wording check, not a guarantee against every implied level judgement.
 
 Verification: rubric-drafting suite passed 52/52; full local suite passed 447 checks in 12 files with zero failures. A subsequent real Qwen2.5 14B trial used the same invented submission and captured teacher rubric as before. Three attempts contained no detected directional level wording, but the best attempt still omitted the criterion name Skills, so the generator rejected it. No draft was inserted into a student card, no teacher level selected, and no MySchool action performed. Consistent usable output from the real model remains a separate tuning task. App and Ollama restarted.
+
+## Prototypes added 2026-11-02 (synthetic-tested only; nothing live-verified)
+
+- **Multi-criterion MySchool posting.** The MySchool form now takes one level per criterion, in page order (`codes`). The preview lists "n. label: existing -> chosen". If the criterion count on the page differs from the levels given, nothing is saved. Matching is by page order; criterion labels are best-effort until seen live.
+- **Multi-page OneNote collection.** "Collect from OneNote..." accepts up to 40 page addresses (one per line). Pages are read one at a time (items p1..pN) with per-page failure, cancel between pages, and sign-in resume from the failed page. A preview table lets the teacher match each page to a student before adding. Still read-only; completeness is always UNVERIFIED.
+- **Teams per-student statuses.** "Read Teams statuses" reads the assignment's roster rows (name + status), complete only when the row count equals "N results found". Statuses are shown on the student cards. Read-only.
+- **Teams grading panel spike (not posting).** `tools/spike_teams_grading_panel.py --class ... --title ... --student "Last, First"` opens one student's panel read-only and writes a name-masked report. Run it on a low-stakes assignment with an empty Feedback box. Teams feedback posting is NOT built until the report shows what the Feedback box and Return dropdown do (and whether Return notifies the student).
+- Cloud test run: 516 checks in 14 files, 0 failed. Run locally with the app and Ollama stopped before committing.
+
+## Prototype fixes and one-student Teams posting (2026-11-02)
+
+The latest prototype adds Export & posting → Post reviewed feedback to Teams. It uses the assignment's saved Teams class/title and imported class/assignment IDs. Select one server-approved student, enter their exact Teams roster name, then read a preview. The preview shows the exact destination, existing feedback and approved feedback separately. A separate confirmation checkbox and Post feedback and Return button authorise replacement and Return. Return may notify the student. There is no bulk posting, level selection by the model, or use of revision/excused/Copilot/points controls.
+
+Live read-only inspection of Task 4 confirmed the submission link, selected-student control, dialog containing #editorAnchor (contenteditable textbox labelled Feedback), Return button and menu options. No feedback was entered and Return was not clicked. The live Return transition, any confirmation dialog, autosave timing and persistence are still unverified. The prototype stops with an uncertain-outcome message if read-back cannot confirm the same submission under Returned with the exact feedback; a click alone never counts as success. Completion ticks remain manual after checking.
+
+Posting jobs use the shared browser lock and tools Python. Previews expire after ten minutes and are single-use. The server checks the approval and saved Teams destination again immediately before any editor change, holding the same bounded approval lock used by the MySchool pilot. Teams can autosave feedback before Return: failures may therefore leave draft feedback. Jobs never automatically retry or allow generic Resume; check Teams and create a fresh preview after an uncertain outcome. Names and feedback stay in the assignment's Assessment/.jobs sidecars, not the journal or preview-claim ledger. Bulk AUTOMATED_POSTING remains False; the explicit one-student pilot is separately guarded.
+
+Review fixes: Teams statuses are tied to the assignment and cleared on switching/new assignments. Batch OneNote Add checks every selected name against the current Course Hub roster and rejects duplicate resolved students, including when the roster is missing. The grading spike no longer falls back to editor contents/input values for field labels; short names are masked, raw browser errors are suppressed and direct calls respect the browser-off guard. The MySchool test model response now includes the required offline-engine list. Synthetic regression tests cover these fixes and the posting pilot; live posting remains unverified.
+
+Validation for this prototype: 552 individual synthetic checks across 15 files passed across the broad run and targeted reruns. The combined run reported 544 passes and two UI-file failures (MySchool's unscoped Reviewed student selector, and a Teams pilot launch timeout). After scoping the MySchool selector, its file passed 44/44. The final Teams pilot file passed 31/31 on its targeted rerun. This is not recorded as a clean single-pass full-suite run. The 85 collector, 29 Teams-status and 13 grading-spike checks passed. No live posting was exercised. App/model services were stopped during tests and restored afterwards.
+
+## Forms response import and draft-quality harness (2026-11-02)
+
+- **Forms response import (read-only, local file).** "Upload files..." now recognises a Microsoft Forms response export (.xlsx or .csv: columns Id, Start time, Completion time, plus questions). One card per named student; the work is each question with the answer. Forms' own columns (times, ids, emails, auto-scores, quiz feedback) are kept out of the work. A quiz's Total points is shown on the card as "Forms auto-score: not a level, not sent to the model". Anonymous exports add no cards and say why. A student who submitted twice: the last response in the file is loaded and the teacher is told. Blank responses are skipped and counted; answers over 4,000 characters are cut and counted; at most 300 responses and 80 columns. Nothing contacts Forms. Names still go through the usual class-list matching. Not built: reading Forms directly from the web, per-question scoring, picture or file-upload answers (they arrive as links and are not read).
+- **Draft-quality harness.** `python tools/draft_quality.py --model qwen2.5:14b --runs 3` runs the app's own drafting on seven invented cases (strong, thin, off-topic, a hidden instruction in the work, a private note, a set level) and writes a report to `quality-reports/` (git-ignored; invented text only). It reports how often drafts were accepted, how often on the first reply, why drafts were refused, and problems the app does not block (quotes the student never wrote, numbers not in the work, a checklist item missed, hidden instruction followed, private note leaked, generic praise, wrong length). A measurement for choosing a model or tuning the prompt, not a grade. Needs Ollama (or LM Studio) running; `--cases` picks cases, `--length` picks the format.
+- Tests: forms_import 21 checks, draft_quality 18 checks (scripted stand-in model, no network). Cloud full run: 591 checks in 17 files, 0 failed.
+
+## Class overview (2026-11-02)
+
+Draft & review now starts with a read-only "Class overview": one row per student card with their Teams status, level and the next thing to do (add work, match to the class list, resolve a duplicate, draft, choose a level, review, review again, ready to post, done). Order of checks: no work, not matched, duplicate, draft failed, instructions changed, no draft, no level, changed since review, not reviewed, then posting ticks. A filter shows Needs attention / Still to do / Ready to post / Done; clicking a name jumps to that card. It reads the page's own cards, sends nothing, changes nothing, and never copies work or feedback text. Files: ui/overview.js, a CSS block in ui/workspace.css, script tag and allowlist entry in app.py. Test: tests/test_class_overview.py (12 checks). Cloud full run: 603 checks in 18 files, 0 failed.
+
+
+## Local Forms and real-model checks (2026-11-02)
+
+Downloaded one real Excel response export from the personally owned Meaning of Life quiz in Microsoft Forms (the two Teams class copies had zero responses). The export has one named response, 40 columns and 11 question columns: ten answered, one blank. The app's parsed question/answer text matched an independent XML read exactly (1,251 characters); the exported name matched, and metadata/points/quiz-feedback columns were excluded from the work. A temporary local app view with saving, generation and posting disabled produced one ungraded card with 11 question blocks and a separate Forms auto-score note. The source workbook was unchanged. No real response was put into the model, saved to a class session, copied into tests or added to git. This verifies one English quiz export only; other layouts, real CSV exports, file/image answers and class-roster matching are not covered by this live check.
+
+The Mac's 17-file run reported 586 passes and two UI failures: MySchool's posting launch timed out; the Teams-status UI reported transient Failed to fetch errors. Each file then passed separately (44/44 and 29/29), covering all 591 checks across the combined run and reruns. This is not a clean single-pass full-suite result. A separate Class overview addition arrived during validation; its newer 18-file/603-check claim has not been verified by this run.
+
+Ran tools/draft_quality.py against real local qwen2.5:14b, paragraph length, one run per seven invented cases, without changing the prompt or model. Two of seven drafts were accepted, neither on the first try; five were refused for omitted rubric criterion names. Mean replies per draft: 2.71 (19 model replies in total). Both accepted drafts had no automatic audit flags, which does not establish full quality: the audit does not establish a specific evidence-based next step for each criterion. All four design cases were refused; the mixed essay and teacher-level-set essay were accepted after two replies, and the off-topic essay was refused. Rejected-case outputs are not retained by the current harness, so injection/private-note outcomes cannot be inferred from rejection alone. This is a first functional benchmark, not the planned three-run stability measurement. Report: quality-reports/20261102-062716-qwen2.5_14b.md, with a baseline sidecar recording the model digest and source fingerprints. Both are git-ignored and contain invented work only. App and Ollama were restored. No grades or feedback were posted, and nothing was committed.
+
+## Pre-commit documentation and targeted checks (2026-11-02)
+
+Updated README, the current workflow/architecture summaries, workspace notes and test coverage documentation to describe the built prototypes and distinguish live checks from synthetic coverage. The newer Mac targeted tests passed: Class overview 12/12, transcription error scoring 7/7 and image-transcription prototype 19/19. These do not establish real-model image accuracy, live posting or a clean combined 20-file run. Image previews are not yet bound to their original assignment; add that guard before normal collection use. Earlier cloud/full-suite counts remain historical results, not substitutes for this narrower Mac verification. Real exports and quality reports remain outside git.

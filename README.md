@@ -8,6 +8,36 @@ cd ~/Repos-folder/student-feedback && python3 app.py     # web page at http://12
 python3 feedback.py submissions/ --rubric rubric.txt --grade 10   # command line
 ```
 
+## Working prototypes
+
+The app follows Design → Setup → Collect → Draft & review → Export & posting. Save the assignment and session before closing. Only you choose levels and approve feedback; later edits require review again.
+
+- Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
+- Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
+- Draft locally in the foreground or background. Class overview shows the next action for each student.
+- Preview one approved student's Teams or MySchool destination, then explicitly confirm posting. Live posting is not yet verified; bulk posting remains disabled.
+- Image transcription is an experimental local-vision prototype. Check every line yourself. Its previews still need an assignment-switch guard; do not switch assignments between choosing an image and adding its text.
+
+See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
+
+## Tests and model quality
+
+Stop the app and Ollama before running synthetic tests:
+
+```bash
+TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin/python tests/run_all.py
+```
+
+Tests use temporary data and stand-in models. The last 17-file Mac run needed separate reruns of two UI files; it was not a clean combined pass. See [tests/README.md](tests/README.md) for scope and current validation notes.
+
+With Ollama running, measure the real drafting model on invented cases:
+
+```bash
+python3 tools/draft_quality.py --model qwen2.5:14b --runs 1
+```
+
+The first seven-case paragraph benchmark accepted 2/7 drafts, both after retries; omitted criterion names caused five refusals. An automatic audit flag count is not a complete quality judgement. Use `--runs 3` for a repeated baseline. Reports stay in git-ignored `quality-reports/`.
+
 ## Writing assignment instructions
 
 List what you're looking for after a label, and each item becomes a checklist the

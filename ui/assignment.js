@@ -176,6 +176,7 @@
   })();
   async function applyRecord(rec) {
     await ready;
+    if(record?.id !== rec.id) { TEAMS = null; applyTeams(); }
     record = rec; design = normalize(rec.design); sources = {...(rec.sources || {})}; teams = rec.teams || null;
     const notes = [];
     setField('#atitle', rec.title || '');
@@ -195,6 +196,7 @@
     await attachSession(false);
   }
   function newAssignment() {
+    TEAMS = null; applyTeams();
     record = null; design = emptyDesign(); sources = {}; teams = null; savedCore = null;
     Object.assign(sess, {aid:'', version:null, path:'', sig:'', hold:false, loaded:false, err:''}); sessNote.replaceChildren(); clearCards();
     setField('#atitle', ''); setField('#rubric', ''); setStandards([]);

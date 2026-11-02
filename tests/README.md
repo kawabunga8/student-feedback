@@ -47,3 +47,24 @@ written on fixture text. Whether the real Teams pages still look like the fixtur
 (replace every student name, class and identifier) and never paste real names into it.
 
 MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin/python tests/test_myschool_pilot.py` uses port 18865, a temporary HOME, a stand-in worker and in-memory synthetic browser pages. It does not contact MySchool or launch your signed-in profile. The full runner still requires production ports 8765/11434 free for older suites.
+
+## Additional prototype suites
+
+| File | Covers |
+|---|---|
+| `test_rubric_drafting.py` | Saved rubric criteria, setting persistence, stale drafts/approvals and rejected level wording |
+| `test_teams_rubric.py` | Separate rubric parsing and supported dialog controls |
+| `test_onenote_collect.py` | Typed-page collection, batch outcomes, roster checks and assignment ownership |
+| `test_teams_students.py` | Complete roster status reads, privacy, jobs and assignment switching |
+| `test_teams_grading_spike.py` | Field labels exclude contents/values, masking and read-only inspection |
+| `test_myschool_pilot.py` | One-student single/multiple-criterion preview, authorization, Save and read-back |
+| `test_teams_post.py` | One-student preview, destination identity, explicit Return, single-use previews and read-back |
+| `test_forms_import.py` | Local Forms export parsing, metadata exclusion, limits, notices and upload UI |
+| `test_draft_quality.py` | Draft benchmark counts and audits with scripted replies |
+| `test_class_overview.py` | Read-only card states, filters and next actions |
+| `test_vision_read.py` | Synthetic images, stand-in vision model, editable text and roster matching |
+| `test_transcribe_check.py` | Character/word error calculations on invented text |
+
+The runner discovers files automatically; counts depend on the current checkout. The last 17-file Mac run reported 586 passes and two UI-file failures. Separate reruns passed MySchool 44/44 and Teams statuses 29/29. Do not report that as a clean combined run. Newer feature tests are listed separately in WORKFLOW.md.
+
+Real-model measurements are deliberately outside the synthetic runner. Start Ollama and use `tools/draft_quality.py`; use `tools/transcribe_check.py` with image/reference-text pairs for transcription. Never add real exports, work, images, credentials or generated feedback to fixtures.

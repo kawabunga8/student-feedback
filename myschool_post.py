@@ -31,6 +31,14 @@ def canonical_url(url):
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
+def parse_codes(value):
+    """Levels for the criteria in page order: 'PRF, EXT+' or ['PRF','EXT+']. Only the four proficiency codes, optional '+'."""
+    items = re.split(r'[\s,;]+', value.strip()) if isinstance(value, str) else [str(x).strip() for x in (value or [])]
+    items = [x.upper() for x in items if x]
+    if not items or len(items) > 12 or any(not re.fullmatch(r'(?:EMG|DEV|PRF|EXT)\+?', x) for x in items):
+        raise PilotError('Levels must be EMG, DEV, PRF or EXT (optionally with +), one per MySchool criterion, in page order.')
+    return items
+
 def level_code(level):
     base = level[:-1] if level.endswith('+') else level
     if base not in LEVELS:
@@ -52,7 +60,8 @@ INSPECT = r'''() => {
        comment: val(comment), status: val(status),
        criteria: [...root.querySelectorAll('.assessment')].map(a => {
          const input = a.querySelector('input[type="hidden"][name^="grade["]');
-         return {input: input?.id || '', selected: val(input),
+         const lab = a.querySelector('.criterion_name, .criteria_name, .assessment_label, label, h4, strong, .name');
+         return {input: input?.id || '', selected: val(input), label: lab ? lab.textContent.trim().slice(0, 80) : '',
            options: [...a.querySelectorAll('.scale_option')].map(o => ({code:o.textContent.trim(), value:o.getAttribute('value')}))};
        })};
    })};
@@ -67,21 +76,27 @@ def target_of(state, request):
     if len(matches) != 1:
         raise PilotError('The exact MySchool student name was missing or repeated. Nothing was saved.')
     student = matches[0]
-    if not re.fullmatch(r'\d+', student.get('id','')) or len(student.get('criteria',[])) != 1:
-        raise PilotError('This pilot requires one student with exactly one criterion. Nothing was saved.')
-    criterion = student['criteria'][0]
-    if not re.fullmatch(r'grade_\d+_\d+', criterion.get('input','')):
-        raise PilotError('The level control differs from the supported page. Nothing was saved.')
-    options = [o for o in criterion['options'] if o['code'] == request['code']]
-    if len(options) != 1 or not options[0].get('value'):
-        raise PilotError('The approved level is not available exactly once. Nothing was saved.')
-    return student, options[0]['value']
+    codes = request.get('codes') or [request['code']]
+    n = len(student.get('criteria', []))
+    if not re.fullmatch(r'\d+', student.get('id','')) or n < 1:
+        raise PilotError('This student has no criteria on the MySchool page. Nothing was saved.')
+    if n != len(codes):
+        raise PilotError(f'This student has {n} criteria on the MySchool page but {len(codes)} level(s) were given. Give one level per criterion, in page order. Nothing was saved.')
+    values = []
+    for criterion, code in zip(student['criteria'], codes):
+        if not re.fullmatch(r'grade_\d+_\d+', criterion.get('input','')):
+            raise PilotError('A level control differs from the supported page. Nothing was saved.')
+        options = [o for o in criterion['options'] if o['code'] == code]
+        if len(options) != 1 or not options[0].get('value'):
+            raise PilotError('The approved level is not available exactly once. Nothing was saved.')
+        values.append(options[0]['value'])
+    return student, values
 
 def proposed(student, req, value):
-    return {'level':value, 'comment':req['comment'], 'status':'2' if req.get('mark_graded') else student['status']}
+    return {'levels':value, 'comment':req['comment'], 'status':'2' if req.get('mark_graded') else student['status']}
 
 def matches(student, desired):
-    return (student['criteria'][0]['selected'] == desired['level'] and student['comment'] == desired['comment'] and student['status'] == desired['status'])
+    return ([c['selected'] for c in student['criteria']] == desired['levels'] and student['comment'] == desired['comment'] and student['status'] == desired['status'])
 
 def open_assessment(page, request):
     url = canonical_url(request['url'])
@@ -110,7 +125,11 @@ def operate(page, request, authorize=contextlib.nullcontext):
     desired = proposed(student, request, value)
     baseline = digest(state)
     if request['op'] == 'inspect':
-        return {'snapshot':baseline, 'target_id':student['id'], 'existing':{'level':next((o['code'] for o in student['criteria'][0]['options'] if o['value']==student['criteria'][0]['selected']),''), 'comment':student['comment'], 'status':student['status']},
+        code_of = lambda c: next((o['code'] for o in c['options'] if o['value'] == c['selected']), '')
+        codes = request.get('codes') or [request['code']]
+        return {'snapshot':baseline, 'target_id':student['id'],
+                'existing':{'levels':[code_of(c) for c in student['criteria']], 'comment':student['comment'], 'status':student['status']},
+                'criteria':[{'label':c.get('label',''), 'existing':code_of(c), 'chosen':k} for c, k in zip(student['criteria'], codes)],
                 'desired':desired, 'publication':state['publication'], 'read_at':time.time()}
     if request['op'] != 'save':
         raise PilotError('Unknown MySchool operation.')
@@ -130,7 +149,8 @@ def operate(page, request, authorize=contextlib.nullcontext):
         group = page.locator('.evaluation_group').filter(has=page.locator('#submission_comment_'+student['id']))
         if group.count() != 1:
             raise PilotError('The student card is not unique. Nothing was saved.')
-        group.locator('.assessment .scale_option').filter(has_text=re.compile('^'+re.escape(request['code'])+'$')).click()
+        for i, code in enumerate(request.get('codes') or [request['code']]):
+            group.locator('.assessment').nth(i).locator('.scale_option').filter(has_text=re.compile('^'+re.escape(code)+'$')).click()
         group.locator('#submission_comment_'+student['id']).fill(request['comment'])
         if request.get('mark_graded'):
             group.locator('#submission_status_'+student['id']).select_option(label='Graded')

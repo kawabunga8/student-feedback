@@ -27,17 +27,18 @@ def markup():
  esc=html.escape
  rows=[]
  for s in state['students']:
-  assessments=''.join('<div class="assessment"><input type="hidden" name="grade['+s['id']+'][501]" id="'+c['input']+'" value="'+c['selected']+'">'+''.join('<span class="scale_option" value="'+o['value']+'">'+o['code']+'</span>' for o in c['options'])+'</div>' for c in s['criteria'])
+  assessments=''.join('<div class="assessment">'+('<label class="criterion_name">'+esc(c['label'])+'</label>' if c.get('label') else '')+'<input type="hidden" name="grade['+s['id']+'][501]" id="'+c['input']+'" value="'+c['selected']+'">'+''.join('<span class="scale_option" value="'+o['value']+'">'+o['code']+'</span>' for o in c['options'])+'</div>' for c in s['criteria'])
   rows.append('<div class="evaluation_group"><img alt="'+esc(s['name'])+'">'+assessments+'<textarea id="submission_comment_'+s['id']+'">'+esc(s['comment'])+'</textarea><select id="submission_status_'+s['id']+'"><option value="1" '+('selected' if s['status']=='1' else '')+'>Not yet graded</option><option value="2" '+('selected' if s['status']=='2' else '')+'>Graded</option></select></div>')
  return '''<html><body><input id="exercise_label" value="'''+esc(state['title'])+'''"><div><input name="course_id" type="radio" checked>'''+esc(state['course'])+'''</div><select id="publication_status_id"><option value="0" selected>No</option></select><a href="#section_3">Assessment</a><div id="student_grid">'''+''.join(rows)+'''</div><button type="button" id="save">save</button><script>
  document.querySelectorAll('.scale_option').forEach(e=>e.onclick=()=>e.parentElement.querySelector('input').value=e.getAttribute('value'));
- document.querySelector('#save').onclick=async()=>{await fetch(location.href,{method:'POST',body:JSON.stringify([...document.querySelectorAll('.evaluation_group')].map(r=>({id:r.querySelector('textarea').id.replace('submission_comment_',''),comment:r.querySelector('textarea').value,status:r.querySelector('select').value,selected:r.querySelector('.assessment input').value})))});};
+ document.querySelector('#save').onclick=async()=>{await fetch(location.href,{method:'POST',body:JSON.stringify([...document.querySelectorAll('.evaluation_group')].map(r=>({id:r.querySelector('textarea').id.replace('submission_comment_',''),comment:r.querySelector('textarea').value,status:r.querySelector('select').value,selected:[...r.querySelectorAll('.assessment input')].map(i=>i.value)})))});};
  </script></body></html>'''
 def route(r):
  if r.request.method=='POST':
   data=json.loads(r.request.post_data);posts.append(data)
   for item in data:
-   s=next(s for s in state['students'] if s['id']==item['id']);s['comment']=item['comment'];s['status']=item['status'];s['criteria'][0]['selected']=item['selected']
+   s=next(s for s in state['students'] if s['id']==item['id']);s['comment']=item['comment'];s['status']=item['status']
+   for c,v in zip(s['criteria'],item['selected']):c['selected']=v
   return r.fulfill(status=200,body='ok')
  return r.fulfill(status=200,content_type='text/html',body=markup())
 with sync_playwright() as p:
@@ -49,7 +50,7 @@ with sync_playwright() as p:
  check('wrong course stops',refuses(lambda:M.operate(page,{**REQ,'course':'Wrong'}),'title or course'))
  check('unknown student stops',refuses(lambda:M.operate(page,{**REQ,'target_name':'Unknown'}),'student'))
  state['students'][0]['criteria'].append(copy.deepcopy(state['students'][0]['criteria'][0]))
- check('multiple criteria refused instead of assigning a blanket level',refuses(lambda:M.operate(page,REQ),'exactly one'))
+ check('two criteria with one level given are refused instead of assigning a blanket level',refuses(lambda:M.operate(page,REQ),'2 criteria'))
  state=base_state()
  pre=M.operate(page,REQ);denied=[]
  @contextlib.contextmanager
@@ -69,6 +70,25 @@ with sync_playwright() as p:
  check('other students and publication unchanged',state['students'][1]==base_state()['students'][1] and state['publication']=='0')
  result=M.operate(page,{**REQ,'op':'save','preview':pre},allow)
  check('retry of exact saved values verifies without another Save',result['already_matching'] and len(posts)==1)
+ # ---- several criteria: one explicit level per criterion, in page order
+ def two():
+  st_=base_state();crit=st_['students'][0]['criteria'][0];crit['label']='Skills';c2=copy.deepcopy(crit);c2['input']='grade_101_502';c2['label']='Make';c2['selected']='1'
+  st_['students'][0]['criteria'].append(c2);return st_
+ M2={**REQ,'codes':['PRF','EXT+']}
+ state=two()
+ check('codes parse: case, commas, plus; junk and empty refused',M.parse_codes('prf, ext+')==['PRF','EXT+'] and refuses(lambda:M.parse_codes('PRF, NYM')) and refuses(lambda:M.parse_codes('')) and refuses(lambda:M.parse_codes('PRF EXT++')))
+ check('wrong number of levels is refused (three levels for two criteria)',refuses(lambda:M.operate(page,{**REQ,'codes':['PRF','EXT','DEV']}),'2 criteria'))
+ check('a level that does not exist on the page is refused (EXT+ is not an option here)',refuses(lambda:M.operate(page,M2),'not available'))
+ for crit in state['students'][0]['criteria']:crit['options'].append({'code':'EXT+','value':'5'})
+ n=len(posts);pre2=M.operate(page,M2)
+ check('multi-criterion preview shows each criterion label, existing and chosen level, and sends no POST',[(c['label'],c['existing'],c['chosen']) for c in pre2['criteria']]==[('Skills','','PRF'),('Make','EMG','EXT+')] and len(posts)==n)
+ r2=M.operate(page,{**M2,'op':'save','preview':pre2},allow)
+ check('multi-criterion save sets each criterion to its own level and is read back',r2['verified'] and [c['selected'] for c in state['students'][0]['criteria']]==['3','5'] and len(posts)==n+1)
+ check('other students unchanged by the multi-criterion save',state['students'][1]==base_state()['students'][1])
+ state=two()
+ for crit in state['students'][0]['criteria']:crit['options'].append({'code':'EXT+','value':'5'})
+ pre3=M.operate(page,M2);state['students'][0]['criteria'][1]['selected']='2'
+ check('a change to any one criterion after the preview refuses Save',refuses(lambda:M.operate(page,{**M2,'op':'save','preview':pre3}),'changed since'))
  state=base_state();state['students'].append(copy.deepcopy(state['students'][0]))
  check('duplicate destination names are refused',refuses(lambda:M.operate(page,REQ),'repeated'))
  state=base_state();pre=M.operate(page,REQ);n=len(posts)
@@ -89,9 +109,9 @@ bound={k:st[k] for k in ['student_id','name','work','notes','level','grade','fee
 st['approval']={'bound':json.dumps(bound),'at':'2026-11-01'};A.save_session(aid,[st],None)
 check('bulk automated posting remains disabled',refuses(lambda:A.approved_for_posting(aid),'disabled'))
 check('pilot reads current server-validated approvals only',len(A.approved_for_posting(aid,destination='myschool_pilot'))==1)
-calls=[]
+calls=[];seen_reqs=[]
 def fake(req,authorize):
- calls.append(req['op'])
+ calls.append(req['op']);seen_reqs.append(req)
  if req['op']=='inspect':return {'snapshot':'synthetic','target_id':'101','read_at':time.time(),'existing':{'level':'','comment':'','status':'1'},'desired':{'level':'3','comment':req['comment'],'status':'2' if req['mark_graded'] else '1'},'publication':'0'}
  with authorize():return {'verified':True,'already_matching':False,'publication':'0'}
 A.MYSCHOOL_RUNNER=fake;A.start_worker()
@@ -110,6 +130,11 @@ def wait_job(j):
 body={**REQ,'type':'myschool','assignment':aid,'student_id':'CH-1'}
 _,out=call('POST','/api/jobs',body);j=wait_job(out['job']);pid=j['id']
 check('preview job stores approved comment and target in sidecar',j['drafts'][0]['myschool']['comment']==REQ['comment'] and calls==['inspect'])
+check('a preview with no codes uses the single approved level',seen_reqs[0]['codes']==['PRF'])
+_,bad=call('POST','/api/jobs',{**body,'codes':'PRF, NYM'});check('invalid per-criterion levels are refused before any job exists','Levels must be' in bad.get('error',''))
+_,out2=call('POST','/api/jobs',{**body,'codes':'prf, ext+'});j2=wait_job(out2['job'])
+check('explicit per-criterion levels reach the reader as an ordered list and are stored only in the sidecar',seen_reqs[-1]['codes']==['PRF','EXT+'] and j2['drafts'][0]['myschool']['codes']==['PRF','EXT+'])
+calls[:]=['inspect']
 _,out=call('POST','/api/jobs',{'type':'myschool','op':'save','assignment':aid,'preview_id':pid})
 check('Save without explicit confirmation refused', 'Confirm' in out.get('error',''))
 check('cross-origin Save refused',call('POST','/api/jobs',body,'http://evil.example')[0]==403)
@@ -140,17 +165,18 @@ check('job journal contains no student names or approved comment',REQ['comment']
 saved=A.load_session(aid)['session'];A.save_session(aid,[st],saved['version'])
 with sync_playwright() as p:
  b=p.chromium.launch(**LAUNCH);pg=b.new_page()
- pg.route('**/api/models',lambda r:r.fulfill(content_type='application/json',body=json.dumps({'models':[{'id':'fake','name':'fake','engine':'Ollama'}],'default':'fake'})))
+ pg.route('**/api/models',lambda r:r.fulfill(content_type='application/json',body=json.dumps({'models':[{'id':'fake','name':'fake','engine':'Ollama'}],'default':'fake','offline':[]})))
  pg.goto('http://127.0.0.1:18865/');pg.locator('#asg-pick').select_option(aid);time.sleep(1)
  pg.get_by_role('button',name='4 Draft & review').click();pg.get_by_role('button',name='Mark reviewed',exact=True).click();time.sleep(2.2)
  pg.get_by_role('button',name='5 Export & posting').click();pg.get_by_role('button',name='Post reviewed assessment to MySchool…').click()
- pg.get_by_label('Reviewed student',exact=True).select_option('CH-1')
- pg.get_by_label('Exact student name shown in MySchool',exact=True).fill('Previous destination')
- pg.get_by_label('Reviewed student',exact=True).select_option('')
- check('changing reviewed student clears the previous MySchool identity',pg.get_by_label('Exact student name shown in MySchool',exact=True).input_value()=='')
- pg.get_by_label('Reviewed student',exact=True).select_option('CH-1')
- pg.get_by_label('MySchool assignment address',exact=True).fill(URL)
- pg.get_by_label('Exact MySchool assignment title',exact=True).fill(REQ['title']);pg.get_by_label('Exact MySchool course name',exact=True).fill(REQ['course']);pg.get_by_label('Exact student name shown in MySchool',exact=True).fill(REQ['target_name'])
+ dlg=pg.get_by_role('dialog',name='MySchool posting pilot')
+ dlg.get_by_label('Reviewed student',exact=True).select_option('CH-1')
+ dlg.get_by_label('Exact student name shown in MySchool',exact=True).fill('Previous destination')
+ dlg.get_by_label('Reviewed student',exact=True).select_option('')
+ check('changing reviewed student clears the previous MySchool identity',dlg.get_by_label('Exact student name shown in MySchool',exact=True).input_value()=='')
+ dlg.get_by_label('Reviewed student',exact=True).select_option('CH-1')
+ dlg.get_by_label('MySchool assignment address',exact=True).fill(URL)
+ dlg.get_by_label('Exact MySchool assignment title',exact=True).fill(REQ['title']);dlg.get_by_label('Exact MySchool course name',exact=True).fill(REQ['course']);dlg.get_by_label('Exact student name shown in MySchool',exact=True).fill(REQ['target_name'])
  pg.get_by_role('button',name='Read destination and preview',exact=True).click();pg.wait_for_selector('.myschool-preview h4',timeout=15000)
  check('GUI preview displays exact approved comment and destination',REQ['comment'] in pg.locator('.myschool-preview').inner_text() and REQ['target_name'] in pg.locator('.myschool-preview').inner_text())
  save=pg.get_by_role('button',name='Save this approved assessment to MySchool',exact=True)

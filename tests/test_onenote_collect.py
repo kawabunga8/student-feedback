@@ -240,5 +240,85 @@ with sync_playwright() as p:
     check("  returning to the original assignment restores its undelivered preview", "Ada Example" in pg.input_value(".collect-name"))
     b.close()
 
+# ---------------------------------------------------------------- E. several pages (a class)
+def pageurl(name, n): return f"https://rcs.sharepoint.com/sites/cn/_layouts/15/Doc.aspx?sourcedoc=%7Bp{n}%7D&action=edit&wd=target({name.replace(' ', '%20')}.one%7C1%2FUnit%7C2%2FTask%7C3%2F)"
+U3 = [pageurl("Ada Example", 1), pageurl("Ben Sample", 2), pageurl("Cy Broken", 3)]
+log2 = []; mode2 = {"signin_at": None, "slow": 0.0}
+def fake2(url, wait=60):
+    log2.append(url); time.sleep(mode2["slow"])
+    if mode2["signin_at"] is not None and url == N.read_only(U3[mode2["signin_at"]]):
+        mode2["signin_at"] = None; return {"ok": False, "kind": "sign_in", "error": "Sign in to Microsoft in the Chrome window that opened, then resume the job."}
+    if "Cy" in url: return {"ok": False, "kind": "differs", "error": "OneNote's page area wasn't found, so nothing was collected.", "log": ["[0.1s] frame found"]}
+    who = N.page_identity(url); txt = f"{MARK}-{who['student_hint'].split()[0].upper()} Notes written by the student about the design brief. " * 3
+    return {"ok": True, "op": "collect", "read_at": "2026-11-01T10:00:00-07:00", "source": {"url": url, "section": who["section"], "page": who["page"], "student_hint": who["student_hint"], "read_at": "2026-11-01T10:00:00-07:00"},
+            "page": {"text": txt.strip(), "chars": len(txt.strip()), "area": "PageContentContainer"}, "non_text": [], "non_text_counts": {}, "completeness": "unverified",
+            "completeness_note": N.completeness_note([], True), "log": ["[0.1s] read"]}
+app.ONENOTE_RUNNER = fake2
+def clean_slate():
+    for x in call("GET", "/api/jobs?assignment=" + aid)[1]["jobs"]:
+        if x["state"] in ("queued", "running", "waiting_for_sign_in", "failed", "interrupted"): call("POST", f"/api/jobs/{x['id']}/cancel", {})
+        call("POST", f"/api/jobs/{x['id']}/delivered", {"keys": ["collect", "p1", "p2", "p3", "p4"]})
+    wait(lambda: all(x["state"] not in ("queued", "running") for x in call("GET", "/api/jobs?assignment=" + aid)[1]["jobs"]))
+clean_slate()
+st, r = call("POST", "/api/jobs", {"type": "onenote_read", "assignment": aid, "urls": [U3[0], "https://example.com/x/Doc.aspx"]}); check("E1 one bad address in a list refuses the whole list", "Class Notebook" in r.get("error", "") and not [x for x in call("GET", "/api/jobs?assignment=" + aid)[1]["jobs"] if x["state"] == "queued"], r)
+st, r = call("POST", "/api/jobs", {"type": "onenote_read", "assignment": aid, "urls": [pageurl("A B", i) for i in range(41)]}); check("  more than 40 pages are refused", "between 1 and 40" in r.get("error", ""), r)
+st, r = call("POST", "/api/jobs", {"type": "onenote_read", "assignment": aid, "urls": U3 + [U3[0]]}); jid = r["job"]["id"]
+check("  duplicates are dropped; one job with one item per page", r["job"]["total"] == 3 and [i["key"] for i in r["job"]["items"]] == ["p1", "p2", "p3"], r["job"]["total"])
+j = wait(lambda: (lambda x: x if x["state"] == "completed" else None)(job(jid)))
+check("E2 pages are read in order; a page that differs fails only itself", j and [i["state"] for i in j["items"]] == ["done", "done", "failed"] and log2[-3:] == [onenote_read_ro for onenote_read_ro in [N.read_only(u) for u in U3]], j and [i["state"] for i in j["items"]])
+check("  the two good pages come back with their own text and source", j and sorted(d["key"] for d in j["drafts"]) == ["p1", "p2"] and "ADA" in j["drafts"][0]["collect"]["page"]["text"] and "BEN" in j["drafts"][1]["collect"]["page"]["text"])
+check("  the failed page offers no text and keeps its reason", j and "nothing was collected" in j["items"][2]["error"] and all("p3" != d["key"] for d in j["drafts"]))
+side = [os.path.join(r_, f) for r_, d_, fs in os.walk(HOME) for f in fs if r_.endswith(".jobs") and f.endswith(".json") and MARK + "-ADA" in open(os.path.join(r_, f)).read()]
+elsewhere = [os.path.join(r_, f) for r_, d_, fs in os.walk(HOME) for f in fs if MARK.encode() in open(os.path.join(r_, f), "rb").read() and "Assessment" not in os.path.join(r_, f)]
+db = open(os.path.join(HOME, "Library/Application Support/student-feedback/jobs.sqlite"), "rb").read()
+check("  page text is only in the assignment's .jobs sidecar; the journal holds no names, text or addresses", len(side) == 1 and not elsewhere and MARK.encode() not in db and b"Ada" not in db and b"sharepoint" not in db, (side, elsewhere))
+clean_slate(); log2.clear(); mode2["slow"] = 1.0
+st, r = call("POST", "/api/jobs", {"type": "onenote_read", "assignment": aid, "urls": U3}); jid = r["job"]["id"]
+wait(lambda: len(log2) >= 1); call("POST", f"/api/jobs/{jid}/cancel", {})
+j = wait(lambda: (lambda x: x if x["state"] in ("cancelled", "completed") else None)(job(jid)), 30)
+check("E3 cancel takes effect between pages: the page in flight finishes, the rest are not read", j and j["state"] == "cancelled" and len(log2) == 1 and j["counts"]["done"] == 1 and j["counts"]["cancelled"] == 2, (j and j["state"], len(log2)))
+mode2["slow"] = 0.0; clean_slate(); log2.clear(); mode2["signin_at"] = 1
+st, r = call("POST", "/api/jobs", {"type": "onenote_read", "assignment": aid, "urls": U3}); jid = r["job"]["id"]
+j = wait(lambda: (lambda x: x if x["state"] == "waiting_for_sign_in" else None)(job(jid)))
+check("E4 a sign-in page on page 2 leaves the job waiting, with page 1 already read", j and j["counts"]["done"] == 1 and len(log2) == 2, j and j["counts"])
+call("POST", f"/api/jobs/{jid}/resume", {}); j = wait(lambda: (lambda x: x if x["state"] == "completed" else None)(job(jid)))
+check("  resume continues from page 2; page 1 is not read again", j and j["counts"]["done"] == 2 and j["counts"]["failed"] == 1 and log2.count(N.read_only(U3[0])) == 1, log2)
+clean_slate(); log2.clear()
+with sync_playwright() as p:
+    b = p.chromium.launch(**LAUNCH); ctx = b.new_context(viewport={"width": 1280, "height": 1000}); pg = ctx.new_page(); errs = []; pg.on("pageerror", lambda e: errs.append(str(e)))
+    pg.goto("http://127.0.0.1:8765/"); time.sleep(2); pg.select_option(".asg-pick", aid); time.sleep(2)
+    pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove())")
+    pg.evaluate("ROSTER = [{id:'S-ADA', first:'Ada', last:'Example', block:'A'}, {id:'S-BEN', first:'Benjamin', last:'Sampleton', block:'A'}]")
+    pg.click("nav.steps button:nth-child(3)"); pg.click("#collect-open")
+    pg.fill(".collect-url", "\n".join(U3)); pg.click(".collect-read")
+    pg.wait_for_selector(".collect-row", timeout=20000)
+    body_ = pg.locator(".collect-preview").inner_text()
+    check("E5 three addresses give a table: two pages read, one that could not be read, with its reason", pg.locator(".collect-row").count() == 2 and "1 could not be read" in body_ and "Page 3 was not collected" in body_ and "nothing was collected" in body_, body_[:300])
+    rows = pg.locator(".collect-row")
+    check("  Ada matches the class list and is ticked; Ben (not on the list) is not matched and is not ticked", "Matches the class list: Example, Ada" in rows.nth(0).inner_text() and rows.nth(0).locator("input[type=checkbox]").is_checked() and "Not on this class list" in rows.nth(1).inner_text() and not rows.nth(1).locator("input[type=checkbox]").is_checked(), rows.nth(1).inner_text()[:120])
+    check("  page text stays hidden until asked for", MARK not in body_ and not rows.nth(0).locator(".teams-full").is_visible())
+    rows.nth(1).locator("input[type=checkbox]").check(); pg.click(".collect-add")
+    check("  manually ticking an unmatched name cannot add any pages", "must match the current Course Hub" in pg.locator(".collect-msg").inner_text() and pg.locator(".student").count() == 0)
+    held_roster = pg.evaluate("ROSTER")
+    pg.evaluate("ROSTER=[]"); pg.click(".collect-add")
+    check("  a missing class list blocks adding pages", "must match the current Course Hub" in pg.locator(".collect-msg").inner_text() and pg.locator(".student").count() == 0)
+    pg.evaluate("r => ROSTER=r", held_roster)
+    rows.nth(1).locator("input[type=checkbox]").check(); rows.nth(1).locator(".collect-bname").fill("Ada Example")
+    pg.click(".collect-add")
+    check("  two ticked pages with the same name are refused", "same student name" in pg.locator(".collect-msg").inner_text() and pg.locator(".student").count() == 0)
+    rows.nth(1).locator(".collect-bname").fill("Benjamin Sampleton"); time.sleep(0.2)
+    check("  fixing the name matches it and the page can be added", "Matches the class list: Sampleton, Benjamin" in rows.nth(1).inner_text())
+    rows.nth(1).locator("input[type=checkbox]").uncheck(); rows.nth(0).locator("input[type=checkbox]").uncheck(); pg.click(".collect-add")
+    check("  adding with nothing ticked says so", "Tick at least one" in pg.locator(".collect-msg").inner_text())
+    rows.nth(0).locator("input[type=checkbox]").check(); pg.click(".collect-add"); time.sleep(1.2)
+    cards = [pg.locator(".student").nth(i) for i in range(pg.locator(".student").count())]
+    ada = [c for c in cards if c.locator(".name").input_value() == "Ada Example"]
+    check("E6 the ticked page becomes a card with its text and its class-list identity", len(ada) == 1 and MARK + "-ADA" in ada[0].locator(".work").input_value() and pg.evaluate("el => el.dataset.rid", ada[0].element_handle()) == "S-ADA")
+    check("  the table now shows only the page left, and the added one is not offered again", pg.locator(".collect-row").count() == 1 and "1 already added" in pg.locator(".collect-preview").inner_text())
+    pg.locator(".collect-row").first.locator(".collect-bname").fill("Benjamin Sampleton")
+    pg.locator(".collect-row").first.locator("input[type=checkbox]").check(); pg.click(".collect-add"); time.sleep(1.0)
+    check("  adding the last page leaves nothing waiting", pg.locator(".collect-row").count() == 0 and not [x for x in call("GET", "/api/jobs?assignment=" + aid)[1]["jobs"] if x["type"] == "onenote_read" and any(i["state"] == "done" and not i["delivered"] for i in x["items"])])
+    check("E7 no page errors", not errs, errs)
+    b.close()
 print(f"\n{sum(ok_all)}/{len(ok_all)} checks passed")
 sys.exit(0 if all(ok_all) else 1)

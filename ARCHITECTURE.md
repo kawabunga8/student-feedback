@@ -4,7 +4,7 @@ What the pieces are, where each one runs, how student work moves between
 them, and the limits that decide where each step has to happen. Companion to
 `WORKFLOW.md` (the plan and current status) and `TEAMS-ASSIGNMENT-SETUP.md`
 (how to set up an assignment so this all runs cleanly). Last updated
-2026-10-30.
+2026-11-02.
 
 ## Design goal: local first
 
@@ -14,29 +14,31 @@ don't need a Claude session. Claude builds and maintains the tooling and
 handles what the local side can't. This document describes the system as it
 is today and, under "Target", how it moves toward that goal.
 
-## Status at a glance (2026-10-31)
+## Current implementation status — 2026-11-02
 
-| Part | Status |
+Build small working prototypes, verify one real case, then refine. The dated logs below preserve earlier states; this summary is the current starting point.
+
+| Capability | Built and verification scope |
 |---|---|
-| student-feedback app and `feedback.py`: drafting, rule checks, level sentence, Course Hub class lists | Implemented and in use |
-| Prompt guard: student work is evidence, not instructions | Implemented 2026-10-31 |
-| Teacher workspace (`ui/workspace.js`, `ui/workspace.css`): Design assignment, Setup, Collect, Draft & review, Export & posting; review marks that any later edit voids; reviewed JSON snapshot; **assisted posting** (open Teams/MySchool, copy the approved feedback, comment and level code, tick when done; edits after posting are flagged) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. Not saved automatically (export before closing); the snapshot is not posting authorization; automated collection and posting not connected |
-| Saved assignment records, Design step and Choose from Teams (`ui/assignment.js`; `/api/assignments`, `/api/class-map`) | Implemented 2026-10-31 (steps 1 and 2 of the assignment-record plan); checked in a browser with synthetic data. Choose from Teams reads pasted Student view text for now; the read-only picker, Create draft in Teams, and refresh with change detection are not built |
-| Read-only Teams reader (`teams_read.py`; `teams_read` job; "List my assignments" in the Choose from Teams dialog) | **Built 2026-11-01 (first version).** Parsers checked on fixture text with invented names (28 checks); the job, sign-in wait, profile lock and dialog checked with a stand-in reader (30 checks). **Not yet run end to end through the app against live Teams.** Reads assignment details and aggregate status counts only; no per-student statuses or names; reference materials listed by name, never read |
-| Persistent assessment sessions (`manifest.json` in the assignment's Assessment folder; `/api/session`) | Implemented 2026-10-31; checked in a browser with synthetic data and a stand-in model. A first, smaller version of the manifest: no collection outcomes, captures or name mapping yet |
-| Background job queue (`jobs.py`; `/api/jobs`; `ui/jobs.js`) with one job type, **draft feedback batch** | Implemented 2026-10-31; checked over HTTP with a stand-in model (app killed mid-job and restarted, resume, cancel, engine down, refused requests, journal holds no student text) and in a browser with synthetic data. Only drafting runs through it. **No browser jobs, Teams import, collection or posting jobs exist yet.** `waiting_for_sign_in` and `needs_teacher_input` states are defined but unused |
-| Engine switch (Ollama / LM Studio) | Implemented; tested against stand-in servers only. Ollama is the only engine installed |
-| `stage_submissions.py` | Implemented (built from the other Claude account); not run in the 2026-10-30/31 sessions |
-| Teams and MySchool click-paths | Mapped by hand; the posting actions (Teams Return, MySchool save) are **not yet verified** |
-| `tools/spike_onenote_text.py` | **Typed page: passed (2026-10-31).** On one real typed page, the automated Chrome profile signed in, the script found OneNote's `#PageContentContainer` (3,271 characters, menus and navigation left out), detected no non-text elements in it, and Shingo confirmed by eye that every answer was there, in order, to the bottom of the page. **Not yet tested:** a page with a pasted image, a page with handwriting, a page with more than one text box, and moving between students unattended |
-| `tools/spike_teams_assignments.py` | **Run 2026-11-01 (one class, one assignment, four runs).** The assignment list, the roster's status text and the Student view (headings Instructions, Reference materials, My work, Points; instructions as text) are readable from the embedded frame; the frame appeared in about 2 seconds once polling used Playwright's own wait. No rubric heading appeared on that assignment. The first Student view run's output was truncated, so extraction is **not yet checked against the complete text**. Attachments, other list tabs, other statuses and other classes untested |
-| `skills/phase-b-upload/SKILL.md` | Draft, pilot mode; posting unverified |
-| Data contracts: manifest, name mapping, collection outcomes, approval record, posting states | **Proposed** (decided 2026-10-31); not built |
-| `collect.py`, vision fallback, `post_teams.py`, `post_myschool.py`, app buttons | **Proposed**; not built |
+| Assignment design, Course Hub context, saved sessions and approvals | Built; server rechecks approvals and edits invalidate review. Teacher chooses every level. |
+| Background drafting and optional Teams rubric | Built. Real Qwen2.5 14B benchmark accepted 2/7 invented cases, neither first try; missing criterion names blocked five. Criterion-by-criterion reliability needs refinement. |
+| Teams assignment/rubric reader | Wording/counts verified on Task 4 and Graphics Design Challenge; rubric descriptors verified on the latter only. Attachments are listed, not read. |
+| Typed OneNote collection | One short typed page verified through the app, including save/reopen. Up to 40 pasted page addresses and roster matching are built and synthetic-tested; broader live collection is unverified. |
+| Forms file import | One real English quiz export verified through parser and temporary upload UI: one response, 11 question blocks, score separate and no level assigned. Direct Forms web import and image/file answers are not built. |
+| Per-student Teams statuses and Class overview | Built; synthetic-tested. Statuses are assignment-bound. Overview completion reflects manual posting ticks, not independent destination verification. |
+| One-student Teams posting | Preview, explicit confirmation, Return and read-back built. Controls inspected live read-only; no live posting/notification behaviour verified. |
+| One-student MySchool posting | One or several teacher-selected criterion levels, preview, explicit Save and read-back built. No live save verified; publishing is preserved. |
+| Image transcription and transcription benchmark | Built; synthetic-tested only. PNG/JPEG to a local Ollama vision model; teacher edits and roster-matches the text. Not automatic OneNote image capture. Image previews still need an assignment-switch guard before normal use. |
+
+Mandatory review remains in place. Bulk automated posting stays disabled. Quality reports, raw exports, student work and staging folders must stay out of commits.
+
+**Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
+
+**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; add the image-preview assignment guard; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
 
 ## MySchool pilot addition (2026-11-01)
 
-`myschool_post.py` and `ui/myschool.js` add an explicit one-student preview/Save path, queued as `myschool_inspect` and `myschool_save`. This supersedes the table's "posting not built" status for this narrowly scoped pilot only. `approved_for_posting(..., destination="myschool_pilot")` reuses server approval validation; other automated posting remains gated off. A subprocess uses the tools Python and shared Chrome lock. Before it edits or clicks Save it requests authorization from the parent, which locks and rechecks the saved review until read-back completes. Names/comments stay in Assessment sidecars, not the job journal. The preview fingerprint binds existing remote values, target student, publication state and the local approval. Preview claims are single-use. Only a single criterion is supported; no assignment publication, batch posting or automatic resume/retry is provided. Live saving is still unverified.
+`myschool_post.py` and `ui/myschool.js` add an explicit one-student preview/Save path, queued as `myschool_inspect` and `myschool_save`. This supersedes the table's "posting not built" status for this narrowly scoped pilot only. `approved_for_posting(..., destination="myschool_pilot")` reuses server approval validation; other automated posting remains gated off. A subprocess uses the tools Python and shared Chrome lock. Before it edits or clicks Save it requests authorization from the parent, which locks and rechecks the saved review until read-back completes. Names/comments stay in Assessment sidecars, not the job journal. The preview fingerprint binds existing remote values, target student, publication state and the local approval. Preview claims are single-use. The initial single-criterion pilot now also accepts one teacher-selected level per criterion in page order; no assignment publication, batch posting or automatic resume/retry is provided. Live saving is still unverified.
 
 ## Overview
 
@@ -497,3 +499,15 @@ each criterion beside the matching evidence would make that review faster (later
   may not appear as a separate element. The test script reports
   completeness as unverified and counts large images, canvases, drawings
   and embedded files it can see.
+
+## One-student Teams posting prototype (2026-11-02)
+
+`teams_post.py` and `ui/teams_post.js` add an explicit preview/Return pilot through the existing queue. `teams_post_inspect` reads one exact student's panel; `teams_post_save` uses a single-use preview, the current server-approved feedback and the saved imported Teams identity. The child-process authorization handshake is shared with MySchool and occurs before all edits, because Teams may autosave. Return is verified by reopening the same submission from Returned and comparing the feedback. Posting jobs cannot resume automatically or through the generic Resume route. Uncertain outcomes require checking Teams and a fresh preview. Requests/results remain in the assignment's Assessment sidecar; bulk posting is still disabled. The control shapes have been inspected live read-only; live saving, Return and its notification behaviour have not been tested.
+
+## Local imports, image transcription and quality measurement (2026-11-02)
+
+`forms_import.py` recognises Forms response headers before the generic CSV/XLSX parser. It returns names, question/answer text and a separate auto-score for the UI. Names follow normal roster matching. The upload does not call Forms or a model. Limits and duplicate/truncation notices are documented in WORKFLOW.md.
+
+`vision_read.py` handles one PNG/JPEG image (up to 8 MB), sends it only to local Ollama, and returns editable text marked UNVERIFIED. `ui/vision.js` displays each source image and requires a current roster match before adding a card. Images and previews are held in memory; card text uses ordinary session storage after the teacher adds it. Preview ownership is not yet bound to an assignment, unlike the OneNote collector; this is a known guard to add. No automatic notebook screenshot capture or real-model transcription is verified.
+
+`ui/overview.js` derives each card's next action without repeating work/feedback or sending data. `tools/draft_quality.py` measures the actual generator on invented cases; `tools/transcribe_check.py` compares supplied images with supplied reference text. These are diagnostic tools, never assessment or approval authorities. Quality reports are ignored by git. The seven-case real-model result and its audit limits are recorded in WORKFLOW.md.

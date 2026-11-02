@@ -164,6 +164,29 @@ def parse_roster(text):
             "rows_read": rows, "statuses": counts, "unknown_statuses": unknown, "consistent": consistent}
 
 
+def parse_roster_students(text):
+    """Per-student status from the roster text: (name, status) read from the same three-line groups as parse_roster.
+    Returned only when the rows add up to the page's own 'N results found' line, so a partly loaded list never passes as
+    the whole class. These are names: the caller keeps them in the assignment's own Assessment folder, never in the journal."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    found = next((int(m.group(1)) for l in lines for m in [re.match(r"^(\d+) results? found$", l)] if m), None)
+    try:
+        start = max(i for i, l in enumerate(lines) if l == "Feedback") + 1
+    except ValueError:
+        return {"complete": False, "students": [], "why": "the roster's column headings weren't found"}
+    end = next((i for i, l in enumerate(lines) if re.match(r"^\d+ results? found$", l)), len(lines))
+    body = lines[start:end]
+    if len(body) % 3:
+        return {"complete": False, "students": [], "why": "the roster rows don't come in groups of three lines"}
+    rows = [{"name": body[k + 1], "status": body[k + 2]} for k in range(0, len(body), 3)]
+    if found is None or len(rows) != found:
+        return {"complete": False, "students": [], "why": f"{len(rows)} rows were read but the page says {found} results"}
+    names = [r["name"].lower() for r in rows]
+    if len(set(names)) != len(names):
+        return {"complete": False, "students": [], "why": "two students have the same name on the roster"}
+    return {"complete": True, "students": rows, "why": ""}
+
+
 SECTION = ("Instructions", "Reference materials", "My work", "Points")
 RUBRIC_BUTTON = re.compile(r"^View rubric$", re.I)   # Teams' button saying a rubric is attached (the rubric text is NOT on this page)
 RUBRIC_HEAD = re.compile(r"^Rubric$", re.I)          # on its own this could be the teacher's own word, so it only counts next to the button
@@ -499,7 +522,7 @@ def _launch(p, headless=False):
         raise ReadError("setup", f"Couldn't start Google Chrome through Playwright: {msg[:300]}")
 
 
-def run(op, cls="", title="", wait=120, signin_wait=240):
+def run(op, cls="", title="", wait=120, signin_wait=240, students=False):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -546,7 +569,8 @@ def run(op, cls="", title="", wait=120, signin_wait=240):
             return {"op": "read", "read_at": now,
                     "source": {**ids, "url": roster_url, "student_view_url": re.sub(r"[?#].*", "", s.frame().url),
                                "teams_class": want["class_name"], "list_title": want["title"], "read_at": now},
-                    "list_row": want, "student_view": sv, "roster_counts": roster, "log": s.log}
+                    "list_row": want, "student_view": sv, "roster_counts": roster, "log": s.log,
+                    **({"roster_students": parse_roster_students(roster_text)} if students else {})}
         finally:
             ctx.close()
 
@@ -556,13 +580,14 @@ def main():
     ap.add_argument("op", choices=["list", "read"])
     ap.add_argument("--class", dest="cls", default="")
     ap.add_argument("--title", default="")
+    ap.add_argument("--students", action="store_true", help="also return each student's status (names), for the app's per-card status")
     ap.add_argument("--wait", type=int, default=120)
     ap.add_argument("--signin-wait", type=int, default=240)
     a = ap.parse_args()
     try:
         if a.op == "read" and not (a.cls and a.title):
             raise ReadError("error", "read needs --class and --title")
-        out = run(a.op, a.cls, a.title, a.wait, a.signin_wait)
+        out = run(a.op, a.cls, a.title, a.wait, a.signin_wait, students=a.students and a.op == "read")
         out["ok"] = True
         print(json.dumps(out, ensure_ascii=False))
         return EXIT["ok"]

@@ -1,4 +1,4 @@
-/* One reviewed student, one criterion, explicit preview then Save. No publishing. */
+/* One reviewed student at a time (one or several criteria), explicit preview then Save. No publishing. */
 (() => {
   const $ = s => document.querySelector(s);
   const el = (tag, text='') => { const e=document.createElement(tag); e.textContent=text; return e; };
@@ -6,7 +6,7 @@
   const post = async b => (await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json();
   const pause = () => new Promise(r=>setTimeout(r,1200));
   const card=el('div');card.className='card myschool-pilot';
-  card.append(el('h3','MySchool pilot — one student'),el('p','Preview one saved, reviewed assessment, then explicitly save its level and MySchool comment. One criterion only. Publishing is never changed. Live saving has not yet been verified.'));
+  card.append(el('h3','MySchool pilot — one student'),el('p','Preview one saved, reviewed assessment, then explicitly save its level(s) and MySchool comment. With several criteria you type one level per criterion, in the order MySchool shows them, and check the preview. Publishing is never changed. Live saving has not yet been verified.'));
   const launch=el('button','Post reviewed assessment to MySchool…');launch.type='button';card.append(launch);$('#step-delivery').append(card);
   const dlg=el('dialog');dlg.className='teams-dialog';dlg.setAttribute('aria-label','MySchool posting pilot');
   dlg.append(el('h3','MySchool posting pilot'));
@@ -18,6 +18,7 @@
   const title=field('Exact MySchool assignment title',el('input'));
   const course=field('Exact MySchool course name',el('input'));course.placeholder='e.g. D Concert Band 12';
   const name=field('Exact student name shown in MySchool',el('input'));name.placeholder='Confirm the MySchool spelling; it may differ from Course Hub';
+  const codes=field('Level for each MySchool criterion, in page order (leave empty only if the student has one criterion)',el('input'));codes.placeholder='e.g. PRF, EXT+ (EMG, DEV, PRF, EXT, optional +)';
   const graded=field('Also set this student’s status to Graded',el('input'));graded.type='checkbox';
   const inspect=el('button','Read destination and preview');inspect.type='button';form.append(inspect);
   const message=el('p');message.setAttribute('role','status');dlg.append(message);
@@ -61,13 +62,13 @@
     try {
       await flush();if(!localCurrent(student.value))throw Error('This student is no longer reviewed. Review and save again.');
       if(owner!==aid()||token!==generation)return;
-      const body=op==='inspect'?{type:'myschool',op,assignment:owner,student_id:student.value,url:url.value.trim(),title:title.value.trim(),course:course.value.trim(),target_name:name.value.trim(),mark_graded:graded.checked}
+      const body=op==='inspect'?{type:'myschool',op,assignment:owner,student_id:student.value,url:url.value.trim(),title:title.value.trim(),course:course.value.trim(),target_name:name.value.trim(),codes:codes.value.trim(),mark_graded:graded.checked}
         :{type:'myschool',op,assignment:owner,preview_id:preview.jobId,confirm:confirm.checked};
       const d=await post(body);if(d.error)throw Error(d.error);
       const out=await follow(d.job,owner,token);if(!out||owner!==aid()||token!==generation)return;
       if(op==='inspect') {
         preview={...out,jobId:d.job.id};previewBox.replaceChildren();
-        previewBox.append(el('h4','Review the exact change'),el('p',out.course+' → '+out.title+' → '+out.target_name),el('p','Approved level: '+out.code),el('p','Approved comment: '+out.comment),el('p','Existing level: '+(out.existing.level||'ungraded')),el('p','Existing comment: '+(out.existing.comment||'(empty)')),el('p',out.mark_graded?'Status will be set to Graded.':'Status will be preserved.'),el('p',out.publication==='0'?'Assignment is unpublished. It will stay unpublished.':'Assignment is published: saved values may be visible immediately under its existing settings. Publication will not be changed.'));
+        previewBox.append(el('h4','Review the exact change'),el('p',out.course+' → '+out.title+' → '+out.target_name),el('p',(out.criteria||[]).length>1?'Levels to save, by criterion (check each against MySchool):':'Level to save:'),...(out.criteria||[]).map((c,i)=>el('p',(i+1)+'. '+(c.label||'(no label found)')+': '+(c.existing||'ungraded')+' → '+c.chosen)),el('p','Approved comment: '+out.comment),el('p','Existing comment: '+(out.existing.comment||'(empty)')),el('p',out.mark_graded?'Status will be set to Graded.':'Status will be preserved.'),el('p',out.publication==='0'?'Assignment is unpublished. It will stay unpublished.':'Assignment is published: saved values may be visible immediately under its existing settings. Publication will not be changed.'));
         message.textContent='Preview only: nothing changed in MySchool. This preview expires after 10 minutes.';
       } else {
         invalidate();message.textContent=out.verified?'Verified by reopening MySchool: the approved level and comment match. Publication setting preserved. Record the MySchool completion tick after checking.':'Save outcome is uncertain. Check MySchool before trying again.';

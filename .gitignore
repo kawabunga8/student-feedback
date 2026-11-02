@@ -19,3 +19,4 @@ name-mapping.json.tmp
 collected/
 # Reviewed snapshots exported from the workspace hold student work and private notes.
 reviewed-feedback*.json
+quality-reports/

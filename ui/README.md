@@ -1,3 +1,13 @@
+# Current workspace prototypes (2026-11-02)
+
+Use WORKFLOW.md's current summary for verification status. The historical implementation notes below describe earlier builds.
+
+The workspace now includes persistent assignment/session records, server-validated approvals, background drafting, read-only Teams assignment/rubric import, typed OneNote batch collection, Forms export uploads, per-student Teams statuses, Class overview, and explicit one-student Teams/MySchool posting pilots. Live posting has not been verified. Class overview completion uses manual destination ticks.
+
+The image-transcription card uses local Ollama and requires edited text plus a roster match before Add. It is synthetic-tested only, is not integrated with OneNote image capture, and still needs its previews bound to their assignment. Keep the same assignment open throughout image collection.
+
+Forms import was verified on one actual quiz export in a temporary local view. Real-model drafting accepted only 2/7 invented cases in the first benchmark; criterion coverage is the next refinement. Teacher level selection and approval remain mandatory.
+
 # Local feedback workspace
 
 Start the existing app (`python3 app.py`) and open http://127.0.0.1:8765.
@@ -127,3 +137,5 @@ Checked with 28 parser checks on fixture text with invented names, and 30 checks
 reader. **Not yet run end to end through the app against live Teams**; the spike (`tools/spike_teams_assignments.py`)
 read one class and one assignment on 2026-11-01. Extraction is not marked complete until the full output has been
 compared with Teams by eye.
+
+Teams posting pilot (2026-11-02): Export & posting → Post reviewed feedback to Teams. One saved, approved student; read-only preview followed by explicit confirmation and Return. The preview shows destination, existing feedback and exact approved feedback. It may replace existing feedback; Return may notify the student. A verified receipt requires reopening the same submission under Returned. No bulk posting or automatic retries. Synthetic coverage is in tests/test_teams_post.py; live posting is not yet verified.
