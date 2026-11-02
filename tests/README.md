@@ -45,3 +45,5 @@ written on fixture text. Whether the real Teams pages still look like the fixtur
 
 `teams_fixtures.py` holds the synthetic Teams text. If Teams' layout changes, update it from a **sanitised** spike output
 (replace every student name, class and identifier) and never paste real names into it.
+
+MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin/python tests/test_myschool_pilot.py` uses port 18865, a temporary HOME, a stand-in worker and in-memory synthetic browser pages. It does not contact MySchool or launch your signed-in profile. The full runner still requires production ports 8765/11434 free for older suites.

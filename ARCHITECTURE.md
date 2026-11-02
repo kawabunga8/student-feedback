@@ -34,6 +34,10 @@ is today and, under "Target", how it moves toward that goal.
 | Data contracts: manifest, name mapping, collection outcomes, approval record, posting states | **Proposed** (decided 2026-10-31); not built |
 | `collect.py`, vision fallback, `post_teams.py`, `post_myschool.py`, app buttons | **Proposed**; not built |
 
+## MySchool pilot addition (2026-11-01)
+
+`myschool_post.py` and `ui/myschool.js` add an explicit one-student preview/Save path, queued as `myschool_inspect` and `myschool_save`. This supersedes the table's "posting not built" status for this narrowly scoped pilot only. `approved_for_posting(..., destination="myschool_pilot")` reuses server approval validation; other automated posting remains gated off. A subprocess uses the tools Python and shared Chrome lock. Before it edits or clicks Save it requests authorization from the parent, which locks and rechecks the saved review until read-back completes. Names/comments stay in Assessment sidecars, not the job journal. The preview fingerprint binds existing remote values, target student, publication state and the local approval. Preview claims are single-use. Only a single criterion is supported; no assignment publication, batch posting or automatic resume/retry is provided. Live saving is still unverified.
+
 ## Overview
 
 ```mermaid

@@ -589,9 +589,9 @@ connected through the desktop app.
 
 ## Running the automated tests
 
-`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (392 checks in 11 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
+`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (currently 426 checks in 12 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
 
-The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). All 392 checks in 11 files passed on the Mac on 2026-11-01. See `tests/README.md`.
+The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). The expanded full suite passed 425 checks in 12 files locally; after the final UI change, the MySchool suite passed 34/34 separately (current expected full total: 426). See `tests/README.md`.
 
 ## Live no-rubric regression: 2026-11-01
 
@@ -628,3 +628,19 @@ Design → Submission setup now offers Microsoft Forms quiz. The existing assign
 ### Final local regression run (2026-11-01)
 
 392 checks passed in 11 files, zero failed, using installed Chrome and synthetic data. Forms selection, hidden fields, completion wording, student-preview instructions and restoring Both/Notebook are covered. The strengthened collector isolation assertion verifies that the original read stays offered while the other assignment has no job. The earlier transient Failed to fetch page error did not recur. Live OneNote collection through the app remains unverified; Forms response import remains unbuilt.
+
+## MySchool read-only capacity check: 2026-11-01
+
+Staff SSO worked in the in-app browser. Navigated Grade Grid → View All Assignments → EarMaster Rhythm Check — FromTheStart → Assessment. The opened assignment is linked to Concert Band 12 (the all-assignments list includes other courses). Assessment exposes level controls EXT+/EXT/PRF+/PRF/DEV+/DEV/EMG+/EMG/NYM/IE, editable comment textareas, a status selector including Not yet graded and Graded, and a Save control. Planning shows publication status No. No levels, comments, statuses or publication settings were changed and Save was not clicked. Browser access and DOM readability are verified; successful writes, persistence after save and Grade Grid read-back remain unverified. The span-based level controls will need scoped selectors.
+
+## MySchool one-student posting pilot (2026-11-01)
+
+Built: Export & posting → Post reviewed assessment to MySchool. Requires a saved assignment/session, a server-current approval, a teacher-selected level and separately reviewed MySchool comment. The teacher enters the exact MySchool assignment edit URL, title, course and student display name. Preview reads the existing values and publication state. Save requires a separate explicit checkbox and button. Only one criterion is supported; multiple/missing students, criteria or controls stop the operation. Optional Graded status is an explicit choice; otherwise status is preserved.
+
+The worker uses the tools Python, existing automated Chrome profile and shared browser lock. Immediately before edits/Save, a child-process handshake makes the server revalidate approval and cancellation while holding the session-save lock. The lock is bounded by a 40-second save/read-back timeout. Previews expire after ten minutes and are single-use for Save. If values already match after a lost response, a fresh read verifies without another Save. Save jobs cannot use generic Resume and are never automatically retried. The browser reopens the assignment and checks the exact level/comment/status, other students and publication state before reporting verified. Assignment publishing is never changed. Bulk automated posting remains disabled; this explicit one-student pilot is separately guarded.
+
+Requests/results containing names and comments live only in the assignment Assessment .jobs sidecars. The job journal and preview-claim ledger hold no names, comments or work. Browser failures use fixed messages, not raw page errors. No live MySchool save was performed during development. Real save behaviour remains unverified; this is a pilot, not batch posting. Keep the dialog open until the result; completion ticks remain manual after checking the receipt.
+
+Tests: 34 new synthetic checks cover URL restrictions, browser-off guard, exact destination identity, duplicate names, single-criterion limit, stale/expired previews, approval revocation immediately before Save, save/read-back, unchanged other students/publication, uncertain save outcomes, idempotent read-back, confirmation/reuse/resume guards, journal privacy and GUI preview/confirmation/receipt. They run on an alternate local port with temporary HOME and invented MySchool pages, without contacting MySchool.
+
+Validation for the MySchool addition: full local run passed 425 checks in 12 files with zero failures. After adding the final identity-reset check and published-assignment warning, the targeted MySchool suite passed 34/34. Current expected full-suite total is 426; the full suite was not repeated for that last UI change. No live records were changed.

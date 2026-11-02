@@ -25,6 +25,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import feedback as fb
 import hashlib
 import sys
+import myschool_post
+import contextlib
 import onenote_read    # one typed OneNote page; the browser part is started in its own process
 import teams_read      # parsers and validators only; the browser part is started in its own process
 import jobs
@@ -360,7 +362,7 @@ def _clean_student(s):
     return st
 
 
-AUTOMATED_POSTING = False   # No worker posts to Teams or MySchool. Any future worker must check this AND use approved_for_posting().
+AUTOMATED_POSTING = False   # Bulk posting stays disabled. The one-student MySchool pilot requires its own preview + explicit Save.
 FOCUS_HEAD = "Teacher's feedback focus (not shown to students):"   # same text as ui/assignment.js
 
 
@@ -424,10 +426,11 @@ def session_status(session, rec):
     return {"students": out, "approved": approved, "assignment_version": rec.get("version", 0)}
 
 
-def approved_for_posting(aid):
+def approved_for_posting(aid, *, destination=None):
     """The only way a posting worker may read what to post: students whose approval the server finds current, with the
-    approved values and which destinations are already ticked. Raises unless AUTOMATED_POSTING has been switched on."""
-    if not AUTOMATED_POSTING:
+    approved values and which destinations are already ticked. Bulk posting stays disabled; the explicit
+    one-student MySchool pilot has its own preview/confirmation guard."""
+    if not AUTOMATED_POSTING and destination != "myschool_pilot":
         raise PermissionError("Automated posting is disabled.")
     rec = load_assignment_record(aid)
     _, d = session_folder(aid, rec)
@@ -685,6 +688,138 @@ def enqueue_onenote_job(body):
 ONENOTE_RUNNER = onenote_runner
 
 
+def myschool_approved(aid, student_id):
+    rows = [s for s in approved_for_posting(aid, destination="myschool_pilot") if s["student_id"] == student_id]
+    if len(rows) != 1:
+        raise ValueError("Save and review this student first. The server must find exactly one current approval.")
+    st = rows[0]
+    myschool_post.level_code(st["level"])
+    if not st["myschool_comment"].strip():
+        raise ValueError("Review a separate MySchool comment before posting.")
+    return st
+
+
+def _run_myschool_job(queue, job):
+    req = queue.request_of(job)["request"]
+    nxt = queue.next_item(job["id"])
+    if not nxt:
+        return
+    def current():
+        st = myschool_approved(job["assignment"], req["student_id"])
+        if myschool_post.digest(st) != req["approval_sha"]:
+            raise myschool_post.PilotError("The reviewed values changed. Create a fresh preview; nothing was saved.")
+        if queue.get(job["id"]).get("cancel"):
+            raise myschool_post.PilotError("The job was cancelled before Save.")
+        return st
+    @contextlib.contextmanager
+    def authorize():
+        with _save_lock:
+            current()
+            yield
+    try:
+        current()
+        out = MYSCHOOL_RUNNER(req, authorize)
+        if req["op"] == "inspect":
+            out.update(approval_sha=req["approval_sha"], student_id=req["student_id"],
+                       target_name=req["target_name"], title=req["title"], course=req["course"], url=req["url"],
+                       code=req["code"], comment=req["comment"], mark_graded=req["mark_graded"])
+        queue.item_finished(job, nxt["idx"], nxt["key"], "done", result={"myschool":out})
+    except Exception as e:
+        # Only our fixed messages enter the journal. No browser exceptions or page text.
+        safe = str(e) if isinstance(e, (myschool_post.PilotError, ValueError)) else "MySchool pilot failed. Check MySchool before retrying a save."
+        queue.item_finished(job, nxt["idx"], nxt["key"], "failed", error=safe[:300])
+
+
+def myschool_runner(req, authorize):
+    """Use the tools Python. The child asks permission immediately before edits/Save;
+    the parent holds the approval lock until read-back finishes. No page data is logged."""
+    if os.environ.get("SF_FORBID_BROWSER"):
+        raise myschool_post.PilotError("Browser use is switched off for tests.")
+    py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
+    proc = subprocess.Popen([py, str(HERE / "myschool_post.py")], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    timer = threading.Timer(180, proc.kill); timer.daemon = True; timer.start()
+    gate = None
+    try:
+        proc.stdin.write(json.dumps(req) + "\n"); proc.stdin.flush()
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if msg.get("authorize") is True:
+                if gate is not None:
+                    raise myschool_post.PilotError("Repeated Save authorization refused.")
+                candidate = authorize(); candidate.__enter__(); gate = candidate
+                timer.cancel(); timer = threading.Timer(40, proc.kill); timer.daemon = True; timer.start()
+                proc.stdin.write("allow\n"); proc.stdin.flush()
+            elif "ok" in msg:
+                if not msg["ok"]:
+                    raise myschool_post.PilotError(msg.get("error", "MySchool pilot failed."))
+                return msg["result"]
+        raise myschool_post.PilotError("MySchool did not return a verified result. Check the destination before retrying.")
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        if gate is not None:
+            gate.__exit__(None, None, None)
+        proc.stdin.close(); proc.stdout.close()
+
+
+MYSCHOOL_RUNNER = myschool_runner
+
+
+def enqueue_myschool_job(body):
+    if QUEUE is None:
+        raise ValueError("The job worker is not running.")
+    aid = str(body.get("assignment", ""))
+    rec = load_assignment_record(aid)
+    rel, _ = session_folder(aid, rec)
+    op = body.get("op")
+    if op not in ("inspect", "save"):
+        raise ValueError("Choose preview or save.")
+    if op == "inspect":
+        sid = str(body.get("student_id", ""))
+        st = myschool_approved(aid, sid)
+        req = {"op":op, "student_id":sid, "approval_sha":myschool_post.digest(st),
+               "url":myschool_post.canonical_url(body.get("url", "")), "title":str(body.get("title", "")).strip(),
+               "course":str(body.get("course", "")).strip(), "target_name":str(body.get("target_name", "")).strip(),
+               "code":myschool_post.level_code(st["level"]), "comment":st["myschool_comment"],
+               "mark_graded":body.get("mark_graded") is True}
+        if not all(req[k] for k in ("title", "course", "target_name")):
+            raise ValueError("Enter the exact MySchool title, course and student name.")
+    else:
+        if body.get("confirm") is not True:
+            raise ValueError("Confirm the exact destination, level and comment before saving.")
+        pid = str(body.get("preview_id", ""))
+        if not JOB_ID.fullmatch(pid):
+            raise ValueError("Create a fresh MySchool preview first.")
+        preview_job = QUEUE.get(pid, with_results=True)
+        if preview_job["type"] != "myschool_inspect" or preview_job["assignment"] != aid or preview_job["state"] != "completed":
+            raise ValueError("The preview does not belong to this assignment or did not complete.")
+        preview = next((d["myschool"] for d in preview_job.get("drafts",[]) if "myschool" in d), None)
+        if not preview or time.time() - preview["read_at"] > 600:
+            raise ValueError("The preview expired. Read MySchool again.")
+        st = myschool_approved(aid, preview["student_id"])
+        if myschool_post.digest(st) != preview["approval_sha"]:
+            raise ValueError("The approval changed. Create a fresh preview.")
+        req = {k:preview[k] for k in ("student_id", "approval_sha", "url", "title", "course", "target_name", "code", "comment", "mark_graded")}
+        req.update(op="save", preview=preview)
+    with _save_lock:
+        if any(j["type"].startswith("myschool_") and j["state"] in ("queued","running","waiting_for_sign_in") for j in QUEUE.list_for(aid)):
+            raise ValueError("A MySchool pilot job is already active for this assignment.")
+        if op == "save":
+            claims_path = APP_DATA / "myschool-preview-claims.json"
+            claims = _read_json(claims_path, {})
+            if pid in claims:
+                raise ValueError("This preview was already used for Save. Check its job result or create a fresh preview.")
+            claims[pid] = datetime.now().astimezone().isoformat(timespec="seconds")
+            _atomic_write_json(claims_path, claims)
+        return QUEUE.enqueue("myschool_"+op, aid, rel, req, [{"key":"myschool", "work_sha":""}])
+
+
 def start_worker():
     """Create the job queue (journal in App Support) and start its worker. Call once, when the app starts."""
     global QUEUE
@@ -697,7 +832,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 
@@ -1429,7 +1564,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Stopped after " + i + " students. Existing drafts remain available." : failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/myschool.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -1456,7 +1591,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/myschool.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -1490,6 +1625,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"assignment": load_assignment_record(urllib.parse.unquote(self.path.rsplit("/", 1)[1]))})
             except (ValueError, FileNotFoundError):
                 self._send(200, {"error": "Assignment not found."})
+        elif self.path.startswith("/api/myschool/approved?"):
+            try:
+                aid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("assignment", [""])[0]
+                rows = approved_for_posting(aid, destination="myschool_pilot")
+                return self._send(200, {"students":[{"student_id":s["student_id"], "name":s["name"], "level":s["level"]} for s in rows]})
+            except Exception:
+                return self._send(200, {"error":"Save and review this assignment before opening the MySchool pilot."})
         elif self.path == "/api/class-map":
             self._send(200, {"map": _read_json(CLASS_MAP, {})})
         elif self.path.startswith("/api/jobs"):
@@ -1587,11 +1729,13 @@ class Handler(BaseHTTPRequestHandler):
                                                 "conflict": True, "current": c.current})
                 if self.path.startswith("/api/jobs"):
                     if self.path == "/api/jobs":
-                        enqueue = {"teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job}.get(body.get("type"), enqueue_draft_job)
+                        enqueue = {"teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "myschool": enqueue_myschool_job}.get(body.get("type"), enqueue_draft_job)
                         return self._send(200, {"job": _job_view(enqueue(body))})
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:
                         raise ValueError("bad job id")
+                    if action == "resume" and QUEUE.get(jid)["type"].startswith("myschool_"):
+                        raise ValueError("MySchool jobs are not resumed. Check the destination and create a fresh preview.")
                     if action == "cancel":
                         job = QUEUE.cancel(jid)
                     elif action == "resume":

@@ -840,6 +840,10 @@
     try { const d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); if(!d.error) { sess.status = d.status; renderSess(); } } catch(e) {}
   }
   async function flushSession() { for(let i = 0; i < 20 && sess.busy; i++) await sleep(100); await saveSession(); }
+  window.feedbackAssignment.saveForPosting = async () => {
+    await flushSession();
+    return !!record && !dirty() && sess.loaded && !sess.hold && !sess.err && sess.sig === JSON.stringify(collect());
+  };
   function showSessionConflict(cur) {
     sessNote.classList.add('warn');
     sessNote.replaceChildren('Student work not saved: this session was saved somewhere else (another tab or window?) at ' + when(cur.updated) +
