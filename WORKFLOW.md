@@ -589,9 +589,9 @@ connected through the desktop app.
 
 ## Running the automated tests
 
-`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (currently 426 checks in 12 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
+`python3 tests/run_all.py` runs every `tests/test_*.py` against synthetic fixtures (currently 447 checks in 12 files). Quit the real app and Ollama first: the tests use ports 8765 and 11434. Needs Playwright with Chromium (set `TEST_BROWSER_CHANNEL=chrome` to use installed Chrome in a temporary profile).
 
-The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). The expanded full suite passed 425 checks in 12 files locally; after the final UI change, the MySchool suite passed 34/34 separately (current expected full total: 426). See `tests/README.md`.
+The tests use a temporary HOME and data folder, a stand-in model and a stand-in Teams runner. `SF_FORBID_BROWSER=1` makes the Teams reader refuse to launch any browser. They never open your signed-in Chrome profile, contact Teams or touch the real Assessment folder. Live checks are separate and manual (`tools/spike_teams_assignments.py`, or an import through the app). The full suite passed 447 checks in 12 files locally on 2026-11-02. See `tests/README.md`.
 
 ## Live no-rubric regression: 2026-11-01
 
@@ -644,3 +644,13 @@ Requests/results containing names and comments live only in the assignment Asses
 Tests: 34 new synthetic checks cover URL restrictions, browser-off guard, exact destination identity, duplicate names, single-criterion limit, stale/expired previews, approval revocation immediately before Save, save/read-back, unchanged other students/publication, uncertain save outcomes, idempotent read-back, confirmation/reuse/resume guards, journal privacy and GUI preview/confirmation/receipt. They run on an alternate local port with temporary HOME and invented MySchool pages, without contacting MySchool.
 
 Validation for the MySchool addition: full local run passed 425 checks in 12 files with zero failures. After adding the final identity-reset check and published-assignment warning, the targeted MySchool suite passed 34/34. Current expected full-suite total is 426; the full suite was not repeated for that last UI change. No live records were changed.
+
+## Live in-app OneNote collection: 2026-11-02
+
+Passed for one typed Stage 4 page in the ICT 9 Q1 notebook, collected under the saved Task 4 assignment. The app returned 512 characters. Comparing the entire expanded preview with the source page-content DOM gave an exact match after the collector’s whitespace normalisation. The student-name hint matched the section in the page address. No images/drawings were detected; completeness remains UNVERIFIED rather than a claim about handwriting or other non-text content. Added one local student card, observed the session save, and reopened the app in a fresh tab: student identity and all 512 characters were unchanged. Zero drafts, approvals or levels were created; nothing was posted or changed in OneNote, Teams or MySchool. No student names, text or page addresses are recorded in this log. Verified for this one short typed page only. Handwriting, pictures, long pages requiring scrolling, pages with more than one text box, whole-class navigation and other page layouts have not been verified through the app.
+
+## Directional level-word regression: 2026-11-02
+
+Added a wording check for scale levels described as destinations, including the real-trial phrase “move toward proficiency” and variants using toward/towards, approach, reach, achieve, attain, become, aim and progress. Ordinary actions such as developing ideas and extending a melody remain allowed; quoted student evidence follows the existing quotation exemption. The system prompt tells the model to describe the specific improvement instead. Persistent violations are rejected after retries, with or without a Teams rubric. This remains a wording check, not a guarantee against every implied level judgement.
+
+Verification: rubric-drafting suite passed 52/52; full local suite passed 447 checks in 12 files with zero failures. A subsequent real Qwen2.5 14B trial used the same invented submission and captured teacher rubric as before. Three attempts contained no detected directional level wording, but the best attempt still omitted the criterion name Skills, so the generator rejected it. No draft was inserted into a student card, no teacher level selected, and no MySchool action performed. Consistent usable output from the real model remains a separate tuning task. App and Ollama restarted.

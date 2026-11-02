@@ -33,6 +33,16 @@ check("2 the system rules tell the model to name, give evidence, give a next ste
 cp = fb.descriptor_copies("You make a clear plan and follows it through most of the project steps, which helps.", RUB)
 check("3 copying 7+ consecutive descriptor words is detected; plain paraphrase is not", cp and not fb.descriptor_copies("Your plan was clear and you kept to it for nearly all of the steps in the project.", RUB), cp)
 
+# Directional scale wording, including the noun used in the real-model failure.
+for phrase in ["move toward proficiency", "moving towards proficiency", "approaching proficiency", "reach proficiency",
+               "achieve proficiency", "attain the Proficient level", "aim for higher proficiency", "become proficient",
+               "progress toward proficiency", "toward developing level", "reach Extending+", "towards emerging standard"]:
+    check("directional level wording caught: " + phrase, bool(fb.directional_level_words("You can " + phrase + " in this criterion.")))
+for phrase in ["Developing your ideas will help your client.", "Keep working toward developing a steadier pulse.",
+               "Try extending the melody by two bars.", "Your emerging ideas need an example.",
+               'You wrote "move toward proficiency" in your reflection.', "Aim for a steady pulse at 80 BPM."]:
+    check("ordinary wording or quoted evidence preserved: " + phrase, not fb.directional_level_words(phrase))
+
 # ---- generate() with a scripted model
 seen = []
 script = []
@@ -76,6 +86,15 @@ seen.clear(); script[:] = ["Your planning is Proficient. Next, test more.", "You
 try: gen(assessment=RUB); r_ = ""
 except fb.DraftRejected as e: r_ = str(e)
 check("7e when every attempt fails, the reason reported is the attempt with the fewest rule problems (not the last)", "never names these rubric criteria" in r_ and "names a level" not in r_, r_)
+
+for use in (None, RUB):
+    seen.clear(); script[:] = ['Your planning and building show effort; move toward proficiency in the "Planning" criterion.'] * 3
+    try: gen(assessment=use); rejected = False
+    except fb.DraftRejected as e: rejected = "move toward proficiency" in str(e)
+    check("live-trial phrase rejected after retries " + ("with rubric" if use else "without rubric"), rejected and len(seen) == 3)
+seen.clear(); script[:] = ['Your planning and building can move toward proficiency.', 'Your planning notes list each step; next explain order changes. Your building runs; next test it more often.']
+out = gen(assessment=RUB)
+check("directional wording triggers a retry and a clean draft is accepted", len(seen) == 2 and "proficiency" not in out and "move toward proficiency" in seen[1][1]["content"])
 
 # ---- the saved record is the source (server side)
 srv = ThreadingHTTPServer(("127.0.0.1", 8765), app.Handler); threading.Thread(target=srv.serve_forever, daemon=True).start()

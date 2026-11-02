@@ -56,6 +56,8 @@ Rules:
 - Judge the work against the rubric/standards provided. If a proficiency scale is given, use only the row for the
   student's grade to understand what stronger work looks like, and describe in plain words what the work shows and
   what would make it stronger.
+- Never present a scale level as a destination (for example, "move toward proficiency" or "reach Proficient").
+  Describe the specific improvement to make instead.
 - Only the teacher assigns levels. Never name or suggest a proficiency level (Emerging, Developing, Proficient,
   Extending, or a "+" level), and never say which level the work is at or is closest to.
 - If the teacher has set a level for this work, treat it as settled: write feedback consistent with it, explain what in
@@ -176,6 +178,23 @@ def named_levels(text):
     own = re.sub(r"[\"“][^\"”]*[\"”]", " ", text)
     pat = r"(?:(?<=[a-z,;:(] )(?:Emerging|Developing|Proficient|Extending)\b\+?|\b(?:Emerging|Developing|Proficient|Extending)\+)"
     return sorted(set(re.findall(pat, own)))
+
+def directional_level_words(text):
+    """Scale language presented as a destination, including the noun 'proficiency'.
+    Keep ordinary actions such as 'developing your ideas' and student quotations out
+    of this wording check. This cannot detect every indirect level judgement."""
+    own = re.sub(r'["“][^"”]*["”]', ' ', text)
+    direction = (r"towards?|approach(?:ing|es|ed)?|reach(?:ing|es|ed)?|achiev(?:e|es|ing|ed)|"
+                 r"attain(?:s|ed|ing)?|becom(?:e|es|ing)|"
+                 r"mov(?:e|es|ing)\s+(?:closer\s+)?(?:to|towards?)|"
+                 r"aim(?:s|ed|ing)?\s+(?:for|at)|progress(?:es|ed|ing)?\s+(?:to|towards?)")
+    modifiers = r"(?:(?:the|a|next|higher|greater|full)\s+|level\s+of\s+)*"
+    target = (r"(?i:proficien(?:t|cy))\b\+?|"
+              r"(?i:emerging|developing|extending)\s*\+?\s+(?i:level|standard|band)\b|"
+              r"(?:Emerging|Developing|Extending)\b\+?")
+    return sorted(set(m.group(0) for m in re.finditer(r"\b(?i:" + direction + r")\s+" +
+                                                    r"(?i:" + modifiers + r")(?:(?:" + target + r"))", own)))
+
 
 COMMAND_TERMS = {  # term -> pattern for the term and its noun ("explain", "explanation")
     "describe": r"describ\w*|description", "explain": r"explain\w*|explanation", "justify": r"justif\w*",
@@ -525,7 +544,7 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         text = sanitize_feedback(reply)
         if length == "detailed":
             text = fix_headings(text)
-        words = wrong_level_words(text, bad) + named_levels(text)  # the teacher's level is added below, never by the model
+        words = wrong_level_words(text, bad) + named_levels(text) + directional_level_words(text)  # the teacher's level is added below, never by the model
         invented = invented_terms(text, terms)
         ghost = unsourced_quotes(text, work, rubric, title)
         gaps = uncovered(text, criteria)
