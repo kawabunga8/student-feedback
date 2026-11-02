@@ -74,6 +74,12 @@ Rules:
   student's work or the task exactly.
 - If the teacher lists criteria to cover, mention every one: as a strength if the work meets it, or as a next step if
   it doesn't.
+- If "Assessment criteria" from the teacher's rubric are given: they are reference for YOU, not text for the student.
+  For each criterion, name the criterion, describe the evidence in the student's work (what it shows, tied to
+  something they actually wrote), and give one concrete next step toward stronger work on that criterion. Use the
+  descriptors only to understand what each criterion looks for and what stronger work would involve. Never copy or
+  closely paraphrase a descriptor, never name or hint at a level, and never write phrases like "is at", "meets",
+  "approaching" or "exceeds" about the work as a whole. Only the teacher chooses levels.
 - Do not use the student's name. Address them as "you". If a name is essential, write [NAME].
 - No percentages, letter grades or scores.
 - If the work is very short, off-task, or missing something the assignment required, say so kindly and plainly.
@@ -421,15 +427,58 @@ def display_name(label):
     return "the student"
 
 
-def generate(model, rubric, grade_level, label, work, notes="", level="", term="", length=DEFAULT_LENGTH, title=""):
+class DraftRejected(ValueError):
+    """The model's best draft still broke a rule about levels or the rubric after the retries. It is not returned: a draft
+    that names or implies a level, echoes rubric wording, or skips a rubric criterion is worse than no draft."""
+
+
+def assessment_block(assessment):
+    """The teacher's Teams rubric as a separate block for the model: every criterion with all four descriptors in full.
+    The levels are shown in order so the model can tell what stronger work looks like; it is told never to name them."""
+    if not assessment:
+        return ""
+    lines = [f"Assessment criteria (from the teacher's rubric \"{assessment.get('title', '')}\"). Reference for you only: "
+             "for each criterion, name it, describe the evidence in the student's work, and give a next step. "
+             "Do not copy or closely paraphrase these descriptors, and never name or imply a level.\n"]
+    for c in assessment.get("criteria", []):
+        lines.append(f"Criterion: {c['name']}")
+        lines += [f"  {l['level']} (reference only): {l['descriptor']}" for l in c["levels"]]
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n\n"
+
+
+def descriptor_copies(text, assessment, run=7):
+    """Stretches of `run` or more consecutive words that the feedback copies from a rubric descriptor (a sign it is
+    echoing the level wording back to the student)."""
+    if not assessment:
+        return []
+    words = lambda t: re.findall(r"[a-z0-9']+", t.lower())
+    mine, out = words(text), []
+    grams = set()
+    for c in assessment.get("criteria", []):
+        for l in c["levels"]:
+            w = words(l["descriptor"])
+            grams.update(tuple(w[i:i + run]) for i in range(len(w) - run + 1))
+    for i in range(len(mine) - run + 1):
+        if tuple(mine[i:i + run]) in grams:
+            out.append(" ".join(mine[i:i + run]))
+            if len(out) >= 3:
+                break
+    return out
+
+
+def generate(model, rubric, grade_level, label, work, notes="", level="", term="", length=DEFAULT_LENGTH, title="", assessment=None):
+    assessment = assessment if length != "sentence" else None     # one sentence can't address each criterion
     terms = command_terms(title + "\n" + rubric)
     criteria = rubric_criteria(rubric) if length != "sentence" else []  # one sentence can't cover a checklist
+    must_name = [c["name"] for c in (assessment or {}).get("criteria", [])]
     user = (
         f"Grade level: {grade_level}\n"
         + (f"Term: {term}\n" if term else "")
         + (f"Assignment: {title.strip()}\n" if title.strip() else "")
         + "\n"
         f"Rubric / what the teacher is looking for:\n{rubric}\n\n"
+        + assessment_block(assessment)
         + (f"Command terms this task uses: {', '.join(terms)}.\n\n" if terms else
            "This task uses no command term (describe, explain, justify, analyse, compare, discuss, evaluate, list, identify), "
            "so never say the task asks for one.\n\n")
@@ -448,7 +497,7 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
            "detailed": "Write the feedback now."}.get(length, "Write the feedback now.")
     )
     bad = avoid_words(level)
-    best, best_hits = None, None
+    best, best_hits, best_hard = None, None, []
     keep_format = {"sentence": "as exactly one sentence",
                    "paragraph": "as one short paragraph, with no headings or bullets"}
     for attempt in range(3):  # regenerate (max twice) if a draft breaks a rule the code can check
@@ -457,11 +506,15 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
                 [f"it says the task asks for {' / '.join(invented)}, but the task never asks for that"] if invented else []) + (
                 ["it writes wording for the student to copy: " + "; ".join(f'"{q}"' for q in ghost)] if ghost else []) + (
                 ["it never mentions: " + ", ".join(gaps)] if gaps else []) + (
+                ["it copies rubric descriptor wording: " + "; ".join(f'"{q}"' for q in copied)] if copied else []) + (
+                ["it never addresses these rubric criteria by name: " + ", ".join(unnamed)] if unnamed else []) + (
                 ["missing heading: " + ", ".join(missing)] if missing else [])
             asks = (["without the quoted words"] if words else []) + (
                 ["without saying the task asks for a kind of thinking it doesn't name"] if invented else []) + (
                 ["saying what to add instead of writing it for them"] if ghost else []) + (
                 ["covering every listed criterion"] if gaps else []) + (
+                ["in your own words, not the rubric's"] if copied else []) + (
+                ["naming each rubric criterion with its evidence and a next step"] if unnamed else []) + (
                 ["with all three bold headings (Strengths, Next steps, One thing to try)"] if missing
                 else [keep_format[length]] if length in keep_format else [])
             msg = user + "\n\nYour previous draft had problems: " + "; ".join(problems) + ". Rewrite it " + " and ".join(asks) + "."
@@ -476,12 +529,20 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         invented = invented_terms(text, terms)
         ghost = unsourced_quotes(text, work, rubric, title)
         gaps = uncovered(text, criteria)
+        copied = descriptor_copies(text, assessment)
+        unnamed = [n for n in must_name if not re.search(r"\b" + re.escape(n.lower()), text.lower())]
         missing = missing_headings(text) if length == "detailed" else []
-        score = len(words) + len(invented) + len(ghost) + len(gaps) + len(missing)
-        if best is None or score < best_hits:
-            best, best_hits = text, score
+        score = len(words) + len(invented) + len(ghost) + len(gaps) + len(missing) + len(copied) + len(unnamed)
+        hard = ([f"names a level or level wording ({', '.join(words[:3])})"] if words else []) + (
+            [f"copies rubric descriptor wording (\"{copied[0]}\")"] if copied else []) + (
+            [f"never names these rubric criteria: {', '.join(unnamed)}"] if unnamed else [])
+        if best is None or (len(hard), score) < (len(best_hard), best_hits):
+            best, best_hits, best_hard = text, score, hard
         if not score:
             break
+    if best_hard:
+        raise DraftRejected("The model's draft still broke these rules after three tries, so it was not used: " + "; ".join(best_hard) +
+                            ". Try again, use another model, or write this one yourself.")
     text = best
     if length in ("sentence", "paragraph"):
         text = re.sub(r"\*\*(?:" + "|".join(map(re.escape, DETAILED_HEADINGS)) + r"):?\*\*:?\s*", "", text, flags=re.I)  # stray labels like **Strengths**

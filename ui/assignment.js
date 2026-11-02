@@ -384,6 +384,15 @@
     const a = make('div', 'teams-act'); if(action) a.append(action);
     r.append(make('div', 'teams-label', label), v, a); return r;
   }
+  // For the drafting controls and the review: the rubric read from Teams, whether it is switched on for drafting, and the
+  // setting a draft or an approval is bound to. The switch lives in the saved record (teams.useRubric), so it is per assignment.
+  const rubricRead = () => teams && teams.rubricState === 'read' && teams.rubric ? teams.rubric : null;
+  const rubricCanon = r => r ? [r.title, ...r.criteria.flatMap(c => c.levels.map(l => c.name + '|' + l.level + '|' + l.descriptor))].join('\n') : '';   // same text as app.py rubric_canon
+  window.feedbackAssignment = {
+    rubric: rubricRead,
+    useRubric: () => !!(rubricRead() && teams.useRubric),
+    setUseRubric: v => { if(!rubricRead()) return; teams = {...teams, useRubric: !!v}; updateBar(); },
+    setting: () => { const u = !!(rubricRead() && teams.useRubric); return {use: u, canon: u ? rubricCanon(teams.rubric) : ''}; }};
   function noteTeams() {
     teams = {...(teams || {}), className:clsIn.value.trim() || (teams && teams.className) || '', importedAt:nowIso()};
     if(parsed) Object.assign(teams, {title:parsed.title, due:parsed.due, referenceMaterials:parsed.referenceMaterials,

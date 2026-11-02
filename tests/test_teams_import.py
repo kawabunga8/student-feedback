@@ -137,6 +137,8 @@ with sync_playwright() as p:
     check("  saved record keeps the source ids, read time, counts and 'reference materials not read'",
           t.get("source", {}).get("assignment_id", "").startswith("aaaaaaaa") and t["source"].get("read_at") and t.get("statusCounts", {}).get("rows_read") == 6 and t.get("referenceMaterialsRead") is False and t.get("rubricState") == "absent", {k: str(v)[:60] for k, v in t.items()})
     check("  record has no student names", "Test, Alpha" not in json.dumps(recs))
+    time.sleep(1.8)
+    check("8b with no rubric read, the drafting checkbox 'Use the Teams rubric' is off and unavailable", pg.is_disabled("#use-rubric") and not pg.is_checked("#use-rubric"))
     # paste route still works
     pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
     pg.fill(".teams-paste", "Back\nTask 9: Pasted\nDue Nov 9\nInstructions\nDo the thing.\nPoints\nNo points"); pg.click(".teams-read"); time.sleep(0.3)
@@ -182,8 +184,25 @@ with sync_playwright() as p:
     pg.click(".teams-all"); time.sleep(0.5); pg.click(".teams-save"); time.sleep(1)
     t3 = json.load(open(os.path.join(adir, os.listdir(adir)[0])))["teams"]
     check("10d3 saved record keeps the rubric as read, apart from the instructions", t3.get("rubricState") == "read" and len(t3.get("rubric", {}).get("criteria", [])) == 2 and "Planning at" not in json.dumps(json.load(open(os.path.join(adir, os.listdir(adir)[0])))["instructions"]), str(t3.get("rubricState")))
+    time.sleep(1.8)
+    check("10d4 once a rubric was read, the drafting checkbox is available and names the criteria (default off)", not pg.is_disabled("#use-rubric") and not pg.is_checked("#use-rubric") and "Planning, Building" in pg.inner_text("#use-rubric >> xpath=../following-sibling::span[1]"))
+    b0 = pg.evaluate("window.feedbackWorkspace.basisNow()")
+    pg.evaluate("document.querySelector('#use-rubric').click()"); time.sleep(0.4)   # the box sits on the drafting step; click it in place
+    b1 = pg.evaluate("window.feedbackWorkspace.basisNow()")
+    check("10e ticking the box marks the assignment unsaved and changes what drafts are judged against (outdated warning)", "Unsaved changes" in pg.inner_text(".assignment-bar") and b0 != b1 and "Planning|Extending|" in b1 and "Planning|Extending|" not in b0)
+    pg.click(".teams-save"); time.sleep(0.8)
+    aid_ = os.listdir(adir)[0][:-5]
+    check("  saved in the assignment record (per assignment)", json.load(open(os.path.join(adir, aid_ + ".json")))["teams"].get("useRubric") is True)
+    pg.reload(); time.sleep(2.5); time.sleep(1.8)
+    check("10f after reload the box is still ticked for that assignment", pg.is_checked("#use-rubric") and not pg.is_disabled("#use-rubric"))
+    pg.select_option(".asg-pick", ""); time.sleep(2)
+    check("10g switching to another (new) assignment: the box is unticked and unavailable", not pg.is_checked("#use-rubric") and pg.is_disabled("#use-rubric"))
+    pg.select_option(".asg-pick", aid_); time.sleep(2)
+    check("  switching back restores it", pg.is_checked("#use-rubric"))
+    pg.evaluate("document.querySelector('#use-rubric').click()"); time.sleep(0.4)
+    check("  unticking marks it unsaved and changes the draft basis again", "Unsaved changes" in pg.inner_text(".assignment-bar") and pg.evaluate("window.feedbackWorkspace.basisNow()") == b0)
     # the reader's diagnostic note is shown when it saw something rubric-like that wasn't the marker
-    mode[0] = "note"; pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
+    mode[0] = "note"; pg.click(".teams-close") if pg.locator(".teams-close").is_visible() else None; time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
     n0 = len(calls); pg.click(".teams-list-btn")
     wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
     pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()

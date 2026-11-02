@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import feedback as fb
 import hashlib
 import sys
+import teams_read      # parsers and validators only; the browser part is started in its own process
 import jobs
 
 HOST, PORT = "127.0.0.1", 8765
@@ -392,6 +393,14 @@ def check_reviewed(bound, st, rec, stamp):
     labels = [x.get("label") for x in (b.get("standards") or []) if isinstance(x, dict)]
     if labels != list(rec.get("standards") or []):
         reasons.append("standards")
+    # The Teams rubric: whether it was used for drafting, and which one. Approvals saved before this existed count as "not used".
+    rb = b.get("rubric") if isinstance(b.get("rubric"), dict) else {}
+    t = rec.get("teams") or {}
+    now = rubric_of(rec) if t.get("useRubric") else None
+    if bool(rb.get("use")) != bool(now):
+        reasons.append("Teams rubric setting")
+    elif now and rb.get("canon") != rubric_canon(now):
+        reasons.append("Teams rubric")
     since = int((stamp or {}).get("assignment_version") or 0)
     if any(h.get("version", 0) > since and h.get("kind") in ("content", "title") for h in (rec.get("history") or [])):
         reasons.append("assignment changed since approval")
@@ -483,12 +492,54 @@ def draft_for(p):
         rubric = (rubric + "\n\n" if rubric else "") + "Learning standards (RCS 2026-27):\n\n" + "\n\n".join(picked)
     if not rubric:
         raise ValueError("Add an assignment description or choose learning standards.")
+    assessment = rubric_for(p) if p.get("use_rubric") else None
     return fb.generate(p["model"], rubric, p.get("grade", ""), p.get("label", "student"), p["work"], p.get("notes", ""), p.get("level", ""),
-                       p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""))
+                       p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""), assessment=assessment)
+
+
+def rubric_sha(r):
+    return hashlib.sha256(json.dumps(r, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
+def rubric_canon(r):
+    """One canonical text for a rubric (title, then criterion|level|descriptor per line). ui/assignment.js builds the same
+    string, so an approval can record exactly which rubric a draft was reviewed against."""
+    return "\n".join([r["title"]] + [f"{c['name']}|{l['level']}|{l['descriptor']}" for c in r["criteria"] for l in c["levels"]]) if r else ""
+
+
+def rubric_of(rec):
+    """The Teams rubric saved in an assignment record, only if it was actually read and still validates; else None."""
+    t = rec.get("teams") or {}
+    r = t.get("rubric")
+    if t.get("rubricState") != "read" or not isinstance(r, dict):
+        return None
+    ok, _ = teams_read.validate_rubric({"title": r.get("title"), "criteria": [
+        {"name": c.get("name"), "heading": c.get("name"), "levels": c.get("levels")} for c in (r.get("criteria") or []) if isinstance(c, dict)]})
+    return ok
+
+
+def saved_rubric(aid):
+    """The Teams rubric saved with an assignment (see rubric_of). It comes from the saved record, never from the page,
+    so what the model gets is what the teacher saw and saved."""
+    try:
+        return rubric_of(load_assignment_record(aid))
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def rubric_for(p):
+    """The Teams rubric for a draft request that asks for it (use_rubric). Refuses clearly rather than quietly drafting
+    without it, and refuses if the saved rubric changed after a background job was queued."""
+    r = saved_rubric(str(p.get("assignment", "")))
+    if r is None:
+        raise ValueError("This assignment has no saved Teams rubric that was read. Read it from Teams and save the assignment, or turn off “Use the Teams rubric”.")
+    if p.get("rubric_sha") and p["rubric_sha"] != rubric_sha(r):
+        raise ValueError("The saved Teams rubric changed after this job was queued. Cancel it and queue it again.")
+    return r
 
 
 JOB_ID = re.compile(r"job-\d{8}-\d{6}-[0-9a-f]{6}")
-JOB_SETTINGS = ("model", "rubric", "doc", "standards", "grade", "term", "length", "title")
+JOB_SETTINGS = ("model", "rubric", "doc", "standards", "grade", "term", "length", "title", "use_rubric")
 QUEUE = None
 
 
@@ -503,7 +554,8 @@ def _run_draft_job(queue, job):
             return
         it = items[nxt["idx"]]
         p = {**req["settings"], "work": it["work"], "notes": it.get("notes", ""), "level": it.get("level", ""),
-             "grade": it.get("grade") or req["settings"].get("grade", ""), "label": it.get("label") or "student"}
+             "grade": it.get("grade") or req["settings"].get("grade", ""), "label": it.get("label") or "student",
+             "assignment": job["assignment"]}
         try:
             queue.item_finished(job, nxt["idx"], nxt["key"], "done", result={"feedback": draft_for(p)})
         except (urllib.error.URLError, ConnectionError):
@@ -602,6 +654,12 @@ def enqueue_draft_job(body):
         raise ValueError("A drafting job for this assignment is already queued, running or waiting to be resumed.")
     settings = {k: body.get("settings", {}).get(k, "") for k in JOB_SETTINGS if k != "standards"}
     settings["standards"] = [str(x) for x in (body.get("settings", {}).get("standards") or [])][:50]
+    settings["use_rubric"] = bool(body.get("settings", {}).get("use_rubric"))
+    if settings["use_rubric"]:
+        r = saved_rubric(aid)
+        if r is None:
+            raise ValueError("This assignment has no saved Teams rubric that was read. Read it from Teams and save the assignment, or turn off “Use the Teams rubric”.")
+        settings["rubric_sha"] = rubric_sha(r)           # the job refuses to continue if the saved rubric changes meanwhile
     if not settings["model"]:
         raise ValueError("Choose a model first.")
     raw = body.get("items")
@@ -1298,7 +1356,8 @@ $("#go").onclick = async () => {
     try {
       const r = await fetch("/api/generate", {method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({model:$("#model").value, rubric, doc:$("#doc").value, standards:stds, grade:c.querySelector(".sgrade").value || $("#grade").value, term:$("#quarter").value ? SCHOOL_YEAR + " " + $("#quarter").value : "", length:$("#length").value, title:$("#atitle").value, label:name,
-                              work:c.querySelector(".work").value, notes:c.querySelector(".notes").value, level:c.querySelector(".level").value})});
+                              work:c.querySelector(".work").value, notes:c.querySelector(".notes").value, level:c.querySelector(".level").value,
+                              assignment:(document.querySelector("#asg-pick")||{}).value||"", use_rubric:!!(document.querySelector("#use-rubric")&&document.querySelector("#use-rubric").checked)})});
       const d = await r.json();
       if(d.error) throw new Error(d.error);
       const out = document.createElement("div"); out.className = "out"; out.contentEditable = "true"; out.textContent = d.feedback.replace(/\*\*/g, "");  // plain text on the page, so Copy and the .csv files carry no asterisks

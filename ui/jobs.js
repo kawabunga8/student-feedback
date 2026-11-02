@@ -15,6 +15,22 @@
   go.after(btn);
   const redo = make('label', 'bg-redo'); const redoBox = make('input'); redoBox.type = 'checkbox'; redo.append(redoBox, ' Redraft students who already have feedback');
   btn.after(redo);
+  const useBox = make('input'); useBox.type = 'checkbox'; useBox.id = 'use-rubric';
+  const useLabel = make('label', 'bg-redo'); useLabel.append(useBox, ' Use the Teams rubric as assessment criteria');
+  const useHint = make('span', 'hint-inline');
+  redo.after(useLabel, useHint);
+  // The checkbox is only available when this assignment has a rubric that was read from Teams. The drafts then name each criterion,
+  // describe evidence and give a next step; they never name or imply a level (that stays with you).
+  const fa = () => window.feedbackAssignment;
+  const syncUse = () => {
+    const r = fa() && fa().rubric();
+    useBox.disabled = !r;
+    useBox.checked = !!(r && fa().useRubric());        // the saved record decides, so switching assignments switches this too
+    useHint.textContent = r ? ' (' + r.criteria.map(c => c.name).join(', ') + '. Save the assignment so the app uses the saved rubric.)' : ' (no rubric has been read from Teams for this assignment)';
+  };
+  useBox.onchange = () => { if(fa()) fa().setUseRubric(useBox.checked); syncUse(); if(ws()) ws().refresh(); };
+  syncUse(); setInterval(syncUse, 1500);
+  const pickEl = $('#asg-pick'); if(pickEl) pickEl.addEventListener('change', () => setTimeout(syncUse, 400));
   const panel = make('div', 'card jobs-panel'); panel.hidden = true; students.before(panel);
   const note = make('div', 'bg-note'); note.setAttribute('role', 'status'); panel.before(note);
   const say = t => { note.textContent = t || ''; };
@@ -50,7 +66,7 @@
     if(!items.length) { say(skipped ? 'Everyone with work already has feedback (tick "Redraft" to write them again).' : 'Paste some student work first.'); return; }
     btn.disabled = true;
     const r = await post('/api/jobs', {assignment: aid, basis: ws() ? ws().basisNow() : '', overwrite: redoBox.checked,
-      settings: {model: $('#model').value, rubric, doc: $('#doc').value, standards: stds, grade: $('#grade').value,
+      settings: {use_rubric: useBox.checked, model: $('#model').value, rubric, doc: $('#doc').value, standards: stds, grade: $('#grade').value,
                  term: $('#quarter').value ? (window.SCHOOL_YEAR || '') + ' ' + $('#quarter').value : '', length: $('#length').value, title: $('#atitle').value},
       items}).catch(e => ({error: e.message}));
     btn.disabled = false;

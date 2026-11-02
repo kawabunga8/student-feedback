@@ -151,14 +151,16 @@
       assignment:document.getElementById('atitle').value, instructions:document.getElementById('rubric').value,
       course:document.getElementById('course').selectedOptions[0]?.textContent || '', school_year:SCHOOL_YEAR,
       quarter:document.getElementById('quarter').value, department:document.getElementById('doc').value,
-      standards:[...document.querySelectorAll('.std:checked')].map(e=>({id:e.value,label:e.closest('label').textContent.trim()}))};
+      standards:[...document.querySelectorAll('.std:checked')].map(e=>({id:e.value,label:e.closest('label').textContent.trim()})),
+      rubric:rubricSetting()};
   }
   function valid(c) { const a = approvals.get(c); return !!a && a.bound === JSON.stringify(payload(c)); }
   // Each draft remembers the instructions and standards it was written against. If those change later, the
   // draft is flagged as possibly outdated (its review mark is voided anyway, because the review binds them).
   const draftBasis = new WeakMap();
+  const rubricSetting = () => (window.feedbackAssignment && window.feedbackAssignment.setting()) || {use: false, canon: ''};
   const basisNow = () => JSON.stringify([document.getElementById('rubric').value,
-    [...document.querySelectorAll('.std:checked')].map(e => e.closest('label').textContent.trim())]);
+    [...document.querySelectorAll('.std:checked')].map(e => e.closest('label').textContent.trim()), rubricSetting()]);
   function flagOutdated(c) {
     const out = c.querySelector('.out:not(.err)');
     let note = c.querySelector('.draft-note');
@@ -166,7 +168,7 @@
     if(!draftBasis.has(out)) draftBasis.set(out, basisNow());
     const stale = draftBasis.get(out) !== basisNow();
     c.classList.toggle('outdated', stale);
-    if(stale && !note) { note = make('p', 'draft-note', 'The instructions or criteria changed after this draft was written. Regenerate it, or check it still fits, before reviewing.'); out.before(note); }
+    if(stale && !note) { note = make('p', 'draft-note', 'The instructions, criteria or Teams rubric setting changed after this draft was written. Regenerate it, or check it still fits, before reviewing.'); out.before(note); }
     if(!stale && note) note.remove();
   }
   function refresh() {
