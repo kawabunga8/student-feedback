@@ -131,6 +131,9 @@ from using DNS rebinding to read class lists.
 | POST | `/api/parse` | Split uploaded files into one entry per student |
 | POST | `/api/load` | Load one Assessment folder |
 | POST | `/api/generate` | Draft feedback for one student |
+| POST | `/api/transcribe` | Read one PNG/JPEG (up to 8 MB) with the local vision model; returns editable text marked UNVERIFIED (stateless; the page binds it to an assignment) |
+| GET | `/api/myschool/approved?assignment=` | Students the server finds approved for the MySchool pilot (id, name, level) |
+| GET | `/api/teams-post/approved?assignment=` | Students the server finds approved for the Teams pilot (id, name, level) |
 
 The app calls Course Hub (`/api/quarters`, `/api/courses`,
 `/api/courses/<id>/roster`) with a key read server-side from `.env.local`,

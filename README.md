@@ -114,6 +114,12 @@ If Course Hub is unreachable the page says so and falls back to:
 
 ## Files
 - `app.py` - web UI + server. `feedback.py` - prompt, model call (Ollama or LM Studio), CLI.
+- `jobs.py` - background job queue (drafting, Teams/OneNote reads, posting jobs). `ui/` - the workspace's scripts and styles; see `ui/README.md`.
+- `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader.
+- `forms_import.py` - Microsoft Forms response-export parser (local file, no network). `vision_read.py` - local vision-model image transcription.
+- `teams_post.py`, `myschool_post.py` - explicit one-student posting pilots (preview, confirmation, read-back). Bulk posting stays off.
+- `stage_submissions.py` - stages collected files into the Assessment folder. `check_session_folder.py` - checks macOS lets the app save there.
+- `tools/` - spikes, `draft_quality.py` and `transcribe_check.py` (real-model measurements). `tests/` - synthetic-data suites; see `tests/README.md`.
 - `standards/` - 2026-27 learning-standards PDFs (parsed on load).
 - `courses.json` - fallback course list, quarter dates, department rules.
 - `.env.local` - Course Hub URL/key (git-ignored).

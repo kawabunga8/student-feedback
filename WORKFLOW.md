@@ -115,6 +115,8 @@ itself, not in the device-bridge shell.
 
 ## Built so far
 
+*Historical (2026-10-30). This list predates the prototypes in the dated entries below; for the current state see "Current prototype status — 2026-11-02" at the top.*
+
 - **`stage_submissions.py`** (script, this repo) — folder-staging for Phase A.
   Calls the running app's own `/api/roster` endpoint to match collected files
   against the live class roster, writes into the exact
@@ -396,6 +398,8 @@ goes through built-in-browser automation instead. Worth flagging to RCS IT
 using the trace IDs above if Shingo wants the faster path back.
 
 ## What to build next
+
+*Historical plan (2026-10-30 and 2026-10-31). Much of it has since been built or revised; the current next steps are in "Current prototype status — 2026-11-02" at the top.*
 
 **Revised build order (2026-10-31, after an outside review of the plan):**
 1. **Prove read access and extraction quality** with `tools/spike_onenote_text.py`. **Typed page passed

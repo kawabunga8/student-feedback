@@ -15,10 +15,10 @@ The workspace wraps the existing course, import, generation and CSV endpoints.
 
 - Design assignment and the assignment bar: see "Saved assignments, Design step, Choose from Teams" below.
 - Setup: assignment instructions, course, term, standards and local model.
-- Collect: existing file uploads and Assessment-folder import. Notebook automation is not connected.
+- Collect: file uploads (including Forms exports), Assessment-folder import, typed OneNote page collection and the image-transcription card. Collection is read-only and its completeness is always unverified.
 - Draft & review: existing student cards and editable drafts, student search, teacher-selected levels,
   separate MySchool comments, explicit review marks and stop after the current generation request.
-- Export & posting: existing CSV exports plus a reviewed JSON snapshot. Posting is not connected.
+- Export & posting: CSV exports, a reviewed JSON snapshot, copy-and-tick assisted posting, and explicit one-student Teams and MySchool posting pilots (preview, confirmation, read-back; live posting unverified). Bulk posting is disabled.
 
 Review marks bind student identity, source text, private notes, feedback, level, MySchool comment,
 assignment instructions, selected standard labels, grade, course, school year and quarter. Editing these
