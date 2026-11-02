@@ -717,7 +717,7 @@ Ran tools/draft_quality.py against real local qwen2.5:14b, paragraph length, one
 
 ## Pre-commit documentation and targeted checks (2026-11-02)
 
-Updated README, the current workflow/architecture summaries, workspace notes and test coverage documentation to describe the built prototypes and distinguish live checks from synthetic coverage. The newer Mac targeted tests passed: Class overview 12/12, transcription error scoring 7/7 and image-transcription prototype 19/19. These do not establish real-model image accuracy, live posting or a clean combined 20-file run. Image previews are not yet bound to their original assignment; add that guard before normal collection use. Earlier cloud/full-suite counts remain historical results, not substitutes for this narrower Mac verification. Real exports and quality reports remain outside git.
+Updated README, the current workflow/architecture summaries, workspace notes and test coverage documentation to describe the built prototypes and distinguish live checks from synthetic coverage. The newer Mac targeted tests passed: Class overview 12/12, transcription error scoring 7/7 and image-transcription prototype 19/19. These do not establish real-model image accuracy, live posting or a clean combined 20-file run. Image previews are not yet bound to their original assignment; add that guard before normal collection use. **(Since fixed: see "Image-preview assignment guard (2026-11-02)" below.)** Earlier cloud/full-suite counts remain historical results, not substitutes for this narrower Mac verification. Real exports and quality reports remain outside git.
 
 ## Image-preview assignment guard (2026-11-02)
 
