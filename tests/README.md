@@ -62,7 +62,7 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 | `test_forms_import.py` | Local Forms export parsing, metadata exclusion, limits, notices and upload UI |
 | `test_draft_quality.py` | Draft benchmark counts and audits with scripted replies |
 | `test_class_overview.py` | Read-only card states, filters and next actions |
-| `test_vision_read.py` | Synthetic images, stand-in vision model, editable text and roster matching |
+| `test_vision_read.py` | Synthetic images, stand-in vision model, editable text, roster matching and the assignment-binding guard |
 | `test_transcribe_check.py` | Character/word error calculations on invented text |
 
 The runner discovers files automatically; counts depend on the current checkout. The last 17-file Mac run reported 586 passes and two UI-file failures. Separate reruns passed MySchool 44/44 and Teams statuses 29/29. Do not report that as a clean combined run. Newer feature tests are listed separately in WORKFLOW.md.

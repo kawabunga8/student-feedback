@@ -4,7 +4,7 @@ Use WORKFLOW.md's current summary for verification status. The historical implem
 
 The workspace now includes persistent assignment/session records, server-validated approvals, background drafting, read-only Teams assignment/rubric import, typed OneNote batch collection, Forms export uploads, per-student Teams statuses, Class overview, and explicit one-student Teams/MySchool posting pilots. Live posting has not been verified. Class overview completion uses manual destination ticks.
 
-The image-transcription card uses local Ollama and requires edited text plus a roster match before Add. It is synthetic-tested only, is not integrated with OneNote image capture, and still needs its previews bound to their assignment. Keep the same assignment open throughout image collection.
+The image-transcription card uses local Ollama and requires edited text plus a roster match before Add. It is synthetic-tested only, is not integrated with OneNote image capture, and needs a saved assignment: each image preview is bound to the assignment open when the image was chosen. Switching assignments discards the preview, and Add and late model replies re-check it.
 
 Forms import was verified on one actual quiz export in a temporary local view. Real-model drafting accepted only 2/7 invented cases in the first benchmark; criterion coverage is the next refinement. Teacher level selection and approval remain mandatory.
 

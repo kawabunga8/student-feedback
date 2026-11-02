@@ -6,7 +6,7 @@ from _common import APPDIR, LAUNCH, guard, guard_app, block_live_browser
 HOME = tempfile.mkdtemp(); os.environ["HOME"] = HOME; guard(HOME)
 sys.path.insert(0, APPDIR); os.chdir(APPDIR)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-SEEN = []; MODELS = ["qwen2.5:14b", "qwen3-vl:8b"]; REPLY = {"text": "My plan\nI will [illegible] the bag.\n[drawing: a bag with two straps]"}
+SEEN = []; MODELS = ["qwen2.5:14b", "qwen3-vl:8b"]; DELAY = {"s": 0}; REPLY = {"text": "My plan\nI will [illegible] the bag.\n[drawing: a bag with two straps]"}
 class O(BaseHTTPRequestHandler):
     def _j(self, o):
         b = json.dumps(o).encode(); self.send_response(200); self.send_header("Content-Type", "application/json")
@@ -14,6 +14,7 @@ class O(BaseHTTPRequestHandler):
     def do_GET(self): self._j({"/api/tags": {"models": [{"name": m} for m in MODELS]}, "/api/ps": {"models": []}}.get(self.path, {}))
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}"); SEEN.append((self.path, body))
+        if DELAY["s"]: time.sleep(DELAY["s"])
         self._j({"message": {"content": REPLY["text"]}})
     def log_message(self, *a): pass
 threading.Thread(target=ThreadingHTTPServer(("127.0.0.1", 11434), O).serve_forever, daemon=True).start()
@@ -68,6 +69,15 @@ with sync_playwright() as p:
     pg.goto("http://127.0.0.1:8765/"); time.sleep(1.5)
     pg.click("nav.steps button:nth-child(3)")
     pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove()); ROSTER = []")
+    A1, A2 = "asg-20261102-aaaaaaaa", "asg-20261102-bbbbbbbb"
+    def open_asg(v):   # stands in for choosing a saved assignment; the real picker lists saved records
+        pg.evaluate("v => { const s = document.getElementById('asg-pick'); if(![...s.options].some(o => o.value === v)) s.add(new Option('Assignment ' + v.slice(-8), v)); s.value = v; }", v)
+    def switch_asg(v, fire=True):
+        pg.evaluate("([v, f]) => { const s = document.getElementById('asg-pick'); if(![...s.options].some(o => o.value === v)) s.add(new Option('Assignment ' + v.slice(-8), v)); s.value = v; if(f) s.dispatchEvent(new Event('change', {bubbles: true})); }", [v, fire])
+    n_chat = len([1 for pth, _ in SEEN if pth == "/api/chat"])
+    pg.set_input_files(".vision-card input[type=file]", f); time.sleep(0.5)
+    check("D0 with no saved assignment open, choosing an image reads nothing and says to open one", pg.locator(".vision-row").count() == 0 and "assignment first" in pg.locator(".vision-msg").inner_text().lower() and len([1 for pth, _ in SEEN if pth == "/api/chat"]) == n_chat)
+    open_asg(A1)
     pg.set_input_files(".vision-card input[type=file]", f); pg.wait_for_selector(".vision-text:not([hidden])", timeout=15000)
     check("D1 choosing an image shows it beside an editable transcription marked unverified", pg.locator(".vision-img").count() == 1 and "My plan" in pg.locator(".vision-text").input_value() and "UNVERIFIED" in pg.locator(".vision-row").inner_text() and "qwen3-vl:8b" in pg.locator(".vision-row").inner_text())
     pg.locator(".vision-name").fill("Ada Example"); pg.click(".vision-add"); time.sleep(0.3)
@@ -79,6 +89,28 @@ with sync_playwright() as p:
     c = pg.locator(".student")
     check("D4 a matched name adds a card with the teacher's corrected text, the match, and a transcribed-from-image note", c.count() == 1 and c.first.locator(".work").input_value() == "My plan (corrected by the teacher)" and pg.evaluate("el => el.dataset.rid", c.first.element_handle()) == "S-ADA" and "Transcribed from page1.png" in c.first.inner_text())
     check("D5 no level is chosen and nothing is drafted or posted", c.first.locator(".level").input_value() == "" and c.first.locator(".out").count() == 0)
+    # --- assignment binding ---
+    pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove())"); pg.evaluate("document.querySelector('.vision-rows').replaceChildren()")
+    open_asg(A1); pg.set_input_files(".vision-card input[type=file]", f); pg.wait_for_selector(".vision-text:not([hidden])", timeout=15000)
+    check("E1 each row shows which assignment it was chosen under", "aaaaaaaa" in pg.locator(".vision-bound").inner_text())
+    pg.locator(".vision-name").fill("Ada Example"); switch_asg(A2)
+    check("E2 switching assignments discards the preview: image, text and Add are gone and it says why", pg.locator(".vision-img").count() == 0 and pg.locator(".vision-text").count() == 0 and pg.locator(".vision-add").count() == 0 and "assignment changed" in pg.locator(".vision-row").inner_text().lower())
+    check("E3 nothing was added to the other assignment", pg.locator(".student").count() == 0)
+    pg.evaluate("document.querySelector('.vision-rows').replaceChildren()")
+    open_asg(A1); pg.set_input_files(".vision-card input[type=file]", f); pg.wait_for_selector(".vision-text:not([hidden])", timeout=15000)
+    pg.locator(".vision-name").fill("Ada Example"); switch_asg(A2, fire=False)   # the page changed the value without a change event
+    pg.click(".vision-add"); time.sleep(0.4)
+    check("E4 even with no change event, Add re-checks the assignment and refuses", pg.locator(".student").count() == 0 and "assignment changed" in pg.locator(".vision-row").inner_text().lower())
+    pg.evaluate("document.querySelector('.vision-rows').replaceChildren()")
+    open_asg(A1); DELAY["s"] = 1.5; pg.set_input_files(".vision-card input[type=file]", f); time.sleep(0.4); switch_asg(A2); time.sleep(2.5); DELAY["s"] = 0
+    check("E5 a transcription that comes back after a switch is dropped, not shown", pg.locator(".vision-text").count() == 0 and pg.locator(".vision-add").count() == 0 and "assignment changed" in pg.locator(".vision-row").inner_text().lower())
+    pg.evaluate("document.querySelector('.vision-rows').replaceChildren()")
+    open_asg(A1); DELAY["s"] = 1.5; pg.set_input_files(".vision-card input[type=file]", f); time.sleep(0.4); switch_asg(A2, fire=False); time.sleep(2.5); DELAY["s"] = 0
+    check("E5b the same, when the assignment changed without a change event: the late transcription is still dropped", pg.locator(".vision-text").count() == 0 and pg.locator(".vision-add").count() == 0 and "assignment changed" in pg.locator(".vision-row").inner_text().lower())
+    pg.evaluate("document.querySelector('.vision-rows').replaceChildren()")
+    open_asg(A1); pg.set_input_files(".vision-card input[type=file]", f); pg.wait_for_selector(".vision-text:not([hidden])", timeout=15000)
+    pg.locator(".vision-name").fill("Ada Example"); pg.click(".vision-add"); time.sleep(0.5)
+    check("E6 under the same assignment the card is still added", pg.locator(".student").count() == 1 and pg.locator(".student").first.locator(".level").input_value() == "")
     check("D6 no page errors", not errs, errs)
     b.close()
 print(f"\n{sum(ok_all)}/{len(ok_all)} checks passed"); sys.exit(0 if all(ok_all) else 1)

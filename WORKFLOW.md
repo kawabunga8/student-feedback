@@ -14,13 +14,13 @@ Build small working prototypes, verify one real case, then refine. The dated log
 | Per-student Teams statuses and Class overview | Built; synthetic-tested. Statuses are assignment-bound. Overview completion reflects manual posting ticks, not independent destination verification. |
 | One-student Teams posting | Preview, explicit confirmation, Return and read-back built. Controls inspected live read-only; no live posting/notification behaviour verified. |
 | One-student MySchool posting | One or several teacher-selected criterion levels, preview, explicit Save and read-back built. No live save verified; publishing is preserved. |
-| Image transcription and transcription benchmark | Built; synthetic-tested only. PNG/JPEG to a local Ollama vision model; teacher edits and roster-matches the text. Not automatic OneNote image capture. Image previews still need an assignment-switch guard before normal use. |
+| Image transcription and transcription benchmark | Built; synthetic-tested only. PNG/JPEG to a local Ollama vision model; teacher edits and roster-matches the text. Not automatic OneNote image capture. Each image preview is bound to the saved assignment open when it was chosen; a switch discards it (synthetic-tested). |
 
 Mandatory review remains in place. Bulk automated posting stays disabled. Quality reports, raw exports, student work and staging folders must stay out of commits.
 
 **Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
 
-**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; add the image-preview assignment guard; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
+**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
 
 ## Historical handoff notes (2026-10-30)
 
@@ -718,3 +718,7 @@ Ran tools/draft_quality.py against real local qwen2.5:14b, paragraph length, one
 ## Pre-commit documentation and targeted checks (2026-11-02)
 
 Updated README, the current workflow/architecture summaries, workspace notes and test coverage documentation to describe the built prototypes and distinguish live checks from synthetic coverage. The newer Mac targeted tests passed: Class overview 12/12, transcription error scoring 7/7 and image-transcription prototype 19/19. These do not establish real-model image accuracy, live posting or a clean combined 20-file run. Image previews are not yet bound to their original assignment; add that guard before normal collection use. Earlier cloud/full-suite counts remain historical results, not substitutes for this narrower Mac verification. Real exports and quality reports remain outside git.
+
+## Image-preview assignment guard (2026-11-02)
+
+`ui/vision.js` now requires a saved assignment before an image is read and binds each preview to it, mirroring the OneNote collector. Switching assignments discards open previews (image released, text cleared, a note says why). Add re-checks the assignment even if no change event fired, and a model reply that arrives after a switch is dropped. Each row shows which assignment it belongs to. The guard is client-side; the transcription endpoint is unchanged and still stateless. `tests/test_vision_read.py` grew from 19 to 27 checks (no-assignment refusal, binding label, switch discards, Add re-check without a change event, late reply dropped with and without a change event, same-assignment Add still works). Each guard was disabled in turn and a new check failed for it. Run in the cloud container with the stand-in model, not on the Mac: vision 27/27, Class overview 12/12, rubric drafting 52/52. Real-model image accuracy is still unmeasured.

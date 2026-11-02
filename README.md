@@ -16,7 +16,7 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
 - Draft locally in the foreground or background. Class overview shows the next action for each student.
 - Preview one approved student's Teams or MySchool destination, then explicitly confirm posting. Live posting is not yet verified; bulk posting remains disabled.
-- Image transcription is an experimental local-vision prototype. Check every line yourself. Its previews still need an assignment-switch guard; do not switch assignments between choosing an image and adding its text.
+- Image transcription is an experimental local-vision prototype. Check every line yourself. Open a saved assignment first: each image preview is bound to it, and switching assignments discards the preview instead of adding it to the wrong class.
 
 See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
 

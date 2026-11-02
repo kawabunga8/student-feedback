@@ -28,13 +28,13 @@ Build small working prototypes, verify one real case, then refine. The dated log
 | Per-student Teams statuses and Class overview | Built; synthetic-tested. Statuses are assignment-bound. Overview completion reflects manual posting ticks, not independent destination verification. |
 | One-student Teams posting | Preview, explicit confirmation, Return and read-back built. Controls inspected live read-only; no live posting/notification behaviour verified. |
 | One-student MySchool posting | One or several teacher-selected criterion levels, preview, explicit Save and read-back built. No live save verified; publishing is preserved. |
-| Image transcription and transcription benchmark | Built; synthetic-tested only. PNG/JPEG to a local Ollama vision model; teacher edits and roster-matches the text. Not automatic OneNote image capture. Image previews still need an assignment-switch guard before normal use. |
+| Image transcription and transcription benchmark | Built; synthetic-tested only. PNG/JPEG to a local Ollama vision model; teacher edits and roster-matches the text. Not automatic OneNote image capture. Each image preview is bound to the saved assignment open when it was chosen; a switch discards it (synthetic-tested). |
 
 Mandatory review remains in place. Bulk automated posting stays disabled. Quality reports, raw exports, student work and staging folders must stay out of commits.
 
 **Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
 
-**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; add the image-preview assignment guard; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
+**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
 
 ## MySchool pilot addition (2026-11-01)
 
@@ -508,6 +508,6 @@ each criterion beside the matching evidence would make that review faster (later
 
 `forms_import.py` recognises Forms response headers before the generic CSV/XLSX parser. It returns names, question/answer text and a separate auto-score for the UI. Names follow normal roster matching. The upload does not call Forms or a model. Limits and duplicate/truncation notices are documented in WORKFLOW.md.
 
-`vision_read.py` handles one PNG/JPEG image (up to 8 MB), sends it only to local Ollama, and returns editable text marked UNVERIFIED. `ui/vision.js` displays each source image and requires a current roster match before adding a card. Images and previews are held in memory; card text uses ordinary session storage after the teacher adds it. Preview ownership is not yet bound to an assignment, unlike the OneNote collector; this is a known guard to add. No automatic notebook screenshot capture or real-model transcription is verified.
+`vision_read.py` handles one PNG/JPEG image (up to 8 MB), sends it only to local Ollama, and returns editable text marked UNVERIFIED. `ui/vision.js` displays each source image and requires a current roster match before adding a card. Images and previews are held in memory; card text uses ordinary session storage after the teacher adds it. Like the OneNote collector, each preview is bound to the saved assignment open when the image was chosen (an unsaved assignment is refused); switching discards it, and Add and late model replies re-check it. The guard is client-side, in the page. No automatic notebook screenshot capture or real-model transcription is verified.
 
 `ui/overview.js` derives each card's next action without repeating work/feedback or sending data. `tools/draft_quality.py` measures the actual generator on invented cases; `tools/transcribe_check.py` compares supplied images with supplied reference text. These are diagnostic tools, never assessment or approval authorities. Quality reports are ignored by git. The seven-case real-model result and its audit limits are recorded in WORKFLOW.md.
