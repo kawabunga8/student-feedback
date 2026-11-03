@@ -57,8 +57,8 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 | `test_onenote_collect.py` | Typed-page collection, batch outcomes, roster checks and assignment ownership |
 | `test_teams_students.py` | Complete roster status reads, privacy, jobs and assignment switching |
 | `test_teams_grading_spike.py` | Field labels exclude contents/values, masking and read-only inspection |
-| `test_myschool_pilot.py` | One-student single/multiple-criterion preview, authorization, Save and read-back |
-| `test_teams_post.py` | One-student preview, destination identity, explicit Return, single-use previews and read-back |
+| `test_myschool_pilot.py` | Older one-student MySchool dialog (removed 2026-11-03; this suite targets that dialog and needs updating or retiring) |
+| `test_teams_post.py` | Older one-student Teams pilot worker: preview, destination identity, explicit Return, single-use previews and read-back (the card was removed 2026-11-03; the worker's helpers are still used) |
 | `test_forms_import.py` | Local Forms export parsing, metadata exclusion, limits, notices and upload UI |
 | `test_draft_quality.py` | Draft benchmark counts and audits with scripted replies |
 | `test_class_overview.py` | Read-only card states, filters and next actions |
@@ -72,3 +72,7 @@ Real-model measurements are deliberately outside the synthetic runner. Start Oll
 `test_teams_create.py`: 30 isolated checks for student-facing payloads, Forms/browser guards, draft-editor identity, authorization before autosave, Save as draft without publishing, reopened exact read-back, stale/duplicate requests, changed-record revocation, and the full preview/confirm/job/receipt GUI flow. Uses invented Teams pages and a stand-in runner only.
 
 `test_myschool_create.py`: 32 isolated synthetic checks for student-facing payloads, required teacher choices, browser/host/new-page guards, unsafe publication defaults, preview without writes, outcome validation, explicit single Save, reopened read-back, stale/duplicate requests, pre-Save revocation and the complete course/preview/outcome/confirm/receipt GUI flow. No MySchool contact.
+
+## Not covered by these suites (2026-11-03)
+
+The one-session engines (`teams_batch.py`, `myschool_batch.py`), their job types and the single posting dialogs (`ui/teams_post.js`, `ui/myschool.js`) have no suite here. They were checked three ways instead: read-only and dry-run live runs against real Teams and MySchool (reading, name matching, opening and closing panels, with nothing typed or clicked), mocked-job checks of the dialogs in a browser (ready/skipped/error rows, the one confirmation, stop at the first failure, per-criterion levels), and one live class (ICT 9 Q1 Task 2, 18 students) posted and saved with read-back. A Playwright suite for the new dialogs, using mocked jobs, is still to be written; the older MySchool and Teams posting suites above target removed dialogs.
