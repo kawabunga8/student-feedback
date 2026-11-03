@@ -35,9 +35,9 @@ def open_target(page, req, returned=False):
         raise PilotError('Teams assignment identity differs from the saved import. Nothing was posted.')
     f = s.frame()
     if returned:
-        f.get_by_role('tab', name=re.compile(r'^Returned \(\d+\)$')).click()
+        f.get_by_role('tab', name=re.compile(r'^Returned\b')).click()
     try:
-        f.get_by_text(req['target_name'], exact=True).wait_for(state='visible', timeout=15000)
+        f.get_by_text(req['target_name'], exact=True).wait_for(state='visible', timeout=40000)
     except Exception:
         raise PilotError('The exact student was not found once in the expected Teams tab (class: ' + req['class'] +
                          '). Check the saved Teams class and the name. Nothing was posted.') from None
@@ -55,7 +55,15 @@ def open_target(page, req, returned=False):
     if not match:
         raise PilotError('The student submission identity could not be read.')
     links.click()
-    panel = f.get_by_role('dialog').filter(has=f.locator('#editorAnchor'))
+    anchor = f.locator('#editorAnchor')
+    anchor.wait_for(state='attached', timeout=20000)
+    # Teams shows the grading panel as a dialog on some assignments and as a "View and grade student work" side pane
+    # (role complementary) on others. Either way the panel is the one container that holds the feedback editor.
+    panel = f.get_by_role('dialog').filter(has=anchor)
+    if panel.count() != 1:
+        panel = f.get_by_role('complementary').filter(has=anchor)
+    if panel.count() != 1:
+        raise PilotError('The grading panel differs from the inspected layout. Nothing was posted.')
     panel.wait_for(state='visible', timeout=20000)
     identity = 'Currently selected student: ' + display_name(req['target_name'])
     if f.get_by_role('button', name=identity, exact=True).count() != 1:
@@ -67,6 +75,13 @@ def open_target(page, req, returned=False):
     if frame_ids != ids or '/submissions/' + match[1] not in urlsplit(f.url).path:
         raise PilotError('The grading panel address differs from the selected submission.')
     return panel, editor, {'source':ids, 'submission_id':match[1], 'existing':editor.inner_text().strip(), 'returned':returned}
+
+
+def return_button(panel):
+    """The one Return button of this student's panel. The side-pane layout draws Return as a split button (its main
+    action plus a menu arrow, both named Return), so the main action is picked by its own id, never the arrow."""
+    main = panel.locator('#speedGraderReturnButton button[id$="__primaryActionButton"]')
+    return main if main.count() == 1 else panel.get_by_role('button', name='Return', exact=True)
 
 
 def operate(page, req, authorize=contextlib.nullcontext):
@@ -85,7 +100,7 @@ def operate(page, req, authorize=contextlib.nullcontext):
         editor.fill(req['feedback'])
         if editor.inner_text().strip() != req['feedback'].strip():
             raise PilotError('The editor did not retain the approved feedback. Check Teams; Return was not clicked.')
-        button = panel.get_by_role('button', name='Return', exact=True)
+        button = return_button(panel)
         end = time.time() + 10
         while button.count() == 1 and not button.is_enabled() and time.time() < end:
             page.wait_for_timeout(250)

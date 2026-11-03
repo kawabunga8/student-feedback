@@ -425,27 +425,33 @@ class Session:
         """Open the assignment whose class and title match exactly, and read its roster counts."""
         items = self.list_items()
         want = match_assignment(items, cls, title)
-        self.select_tab(want.get("tab", "Upcoming"))      # the row is only on screen under the tab it was listed on
-        f = self.frame()
-        rows = f.get_by_role("listitem")
-        hit = None
-        for i in range(rows.count()):
-            try:
-                t = rows.nth(i).inner_text(timeout=2000)
-            except Exception:
-                continue
-            lines = [l.strip() for l in t.splitlines() if l.strip()]
-            if want["title"] in lines and want["class_name"] in lines:
-                hit = rows.nth(i); break
-        if hit is None:
-            raise ReadError("differs", "The assignment was in the list text but its row couldn't be found to open.")
-        self.click("list-row", hit.get_by_text(want["title"], exact=True).first)
-        t = self.wait_for("roster", lambda t: want["title"] in t and bool(re.search(r"\d+ results? found", t)))
-        # The text can appear before the frame's address settles (the list page's text may still be on screen), so
-        # wait on the address too, then re-read the text so counts come from the settled page.
-        end = time.time() + 20
-        while time.time() < end and not is_review_url(self.frame().url):
-            self.page.wait_for_timeout(500)
+        for attempt in (1, 2):                    # the first click can land before the list is ready: try once more
+            self.select_tab(want.get("tab", "Upcoming"))      # the row is only on screen under the tab it was listed on
+            f = self.frame()
+            rows = f.get_by_role("listitem")
+            hit = None
+            for i in range(rows.count()):
+                try:
+                    t = rows.nth(i).inner_text(timeout=2000)
+                except Exception:
+                    continue
+                lines = [l.strip() for l in t.splitlines() if l.strip()]
+                if want["title"] in lines and want["class_name"] in lines:
+                    hit = rows.nth(i); break
+            if hit is None:
+                if attempt == 2:
+                    raise ReadError("differs", "The assignment was in the list text but its row couldn't be found to open.")
+                self.page.wait_for_timeout(1500); continue
+            self.click("list-row", hit.get_by_text(want["title"], exact=True).first)
+            t = self.wait_for("roster", lambda t: want["title"] in t and bool(re.search(r"\d+ results? found", t)))
+            # The text can appear before the frame's address settles (the list page's text may still be on screen), so
+            # wait on the address too, then re-read the text so counts come from the settled page.
+            end = time.time() + (15 if attempt == 1 else 20)
+            while time.time() < end and not is_review_url(self.frame().url):
+                self.page.wait_for_timeout(500)
+            if is_review_url(self.frame().url):
+                break
+            self.note(f"click {attempt} did not open the roster")
         url = self.frame().url
         self.note("roster address shape: " + url_shape(url))
         ids = ids_from_url(url)
