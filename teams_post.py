@@ -60,8 +60,10 @@ def open_target(page, req, returned=False):
     if links.count() != 1:
         raise PilotError('The student work link differs from the supported panel.')
     href = links.get_attribute('href') or ''
-    if returned and not re.search(r'\breturned\b', links.get_attribute('aria-label') or '', re.I):
-        raise PilotError('The roster did not confirm Returned. Check Teams before retrying.')
+    if returned:
+        label = (links.get_attribute('aria-label') or '') + ' ' + row.inner_text()
+        if not any(l.strip().lower() == 'returned' for l in label.splitlines()) and not re.search(r'\breturned\b', links.get_attribute('aria-label') or '', re.I):
+            raise PilotError('The roster did not confirm Returned. Check Teams before retrying.')
     match = re.search(r'/submissions/([0-9a-f-]{36})(?:/|\?|$)', href)
     if not match:
         raise PilotError('The student submission identity could not be read.')
@@ -95,6 +97,20 @@ def return_button(panel):
     return main if main.count() == 1 else panel.get_by_role('button', name='Return', exact=True)
 
 
+def confirm_returned(page, req):
+    """Read-only: the student is listed under the roster's Returned tab with a Returned status."""
+    s = T.Session(page, 60); s.t0 = time.time()
+    s.open_one(req['class'], req['title'])
+    f = s.frame()
+    f.get_by_role('tab', name=re.compile(r'Returned', re.I)).click(timeout=10000)
+    f.get_by_text(req['target_name'], exact=True).wait_for(state='visible', timeout=40000)
+    rows = f.get_by_role('row').filter(has=f.get_by_text(req['target_name'], exact=True))
+    if rows.count() != 1:
+        raise PilotError('The student was not found once under Returned. Check Teams before trying again.')
+    if not any(l.strip().lower() == 'returned' for l in rows.first.inner_text().splitlines()):
+        raise PilotError('The roster did not confirm Returned. Check Teams before trying again.')
+
+
 def operate(page, req, authorize=contextlib.nullcontext):
     panel, editor, state = open_target(page, req)
     if req['op'] == 'inspect':
@@ -119,17 +135,22 @@ def operate(page, req, authorize=contextlib.nullcontext):
             raise PilotError('Return is unavailable. Feedback may be saved as a draft; check Teams.')
         validate_current(page, req, state['submission_id'])
         button.click()
-        # Reopen from the roster's Returned tab: the button click alone is never success.
+        # The button click alone is never success. Reload Teams (the open grading panel hides its Assignments rail), then
+        # confirm from the roster that this student is now listed under Returned. The feedback text itself was checked in
+        # the editor just before the click (above); a Returned submission's panel does not reopen reliably, so it is not re-read.
         page.wait_for_timeout(2000)
-        try:
-            _, check_editor, after = open_target(page, req, returned=True)
-        except PilotError as e:
-            if 'Return' in str(e) or 'Check Teams' in str(e):
+        page.goto(T.TEAMS, wait_until='domcontentloaded'); page.wait_for_timeout(4000)
+        for attempt in (1, 2):                    # Teams is sometimes slow to show the list: look once more before giving up
+            try:
+                confirm_returned(page, req)
+                break
+            except PilotError:
                 raise
-            raise PilotError('Return may have run, but Teams could not be read back to confirm it. Check Teams before trying again.') from None   # open_target's own "Nothing was posted" no longer holds
-        if after['submission_id'] != state['submission_id'] or check_editor.inner_text().strip() != req['feedback'].strip():
-            raise PilotError('Return could not be verified. Check Teams before trying again.')
-        return {'verified':True, 'returned':True, 'submission_id':after['submission_id'], 'read_at':time.time()}
+            except Exception:
+                if attempt == 2:
+                    raise PilotError('Return may have run, but Teams could not be read back to confirm it. Check Teams before trying again.') from None
+                page.goto(T.TEAMS, wait_until='domcontentloaded'); page.wait_for_timeout(5000)
+        return {'verified':True, 'returned':True, 'submission_id':state['submission_id'], 'read_at':time.time()}
 
 
 def run(req, authorize=contextlib.nullcontext):

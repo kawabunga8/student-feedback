@@ -469,15 +469,19 @@ class Session:
             self.select_tab(want.get("tab", "Upcoming"))      # the row is only on screen under the tab it was listed on
             f = self.frame()
             rows = f.get_by_role("listitem")
-            hit = None
-            for i in range(rows.count()):
-                try:
-                    t = rows.nth(i).inner_text(timeout=2000)
-                except Exception:
-                    continue
-                lines = [l.strip() for l in t.splitlines() if l.strip()]
-                if want["title"] in lines and want["class_name"] in lines:
-                    hit = rows.nth(i); break
+            hit, end_rows = None, time.time() + 15          # right after a page reload the rows can take a few seconds to appear
+            while hit is None:
+                for i in range(rows.count()):
+                    try:
+                        t = rows.nth(i).inner_text(timeout=2000)
+                    except Exception:
+                        continue
+                    lines = [l.strip() for l in t.splitlines() if l.strip()]
+                    if want["title"] in lines and want["class_name"] in lines:
+                        hit = rows.nth(i); break
+                if hit is not None or time.time() > end_rows:
+                    break
+                self.page.wait_for_timeout(700)
             if hit is None:
                 if attempt == 2:
                     raise ReadError("differs", "The assignment was in the list text but its row couldn't be found to open.")
