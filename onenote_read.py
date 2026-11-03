@@ -149,6 +149,48 @@ def _onenote_frame(page):
     return best, size
 
 
+def read_loaded(page, target, who, note, wait=60):
+    """Read the typed text of the OneNote page already open in `page` (read-only: scrolls it, reads its page area).
+    run() uses it for one page; the class collector uses it for every student in one browser session."""
+    frame, end = None, time.time() + wait
+    while time.time() < end:
+        for f in page.frames:
+            txt = _frame_text(f)
+            if "AADSTS" in txt:
+                raise T.ReadError("blocked", "Sign-in is blocked by RCS's policy for this automated Chrome (" +
+                                  re.search(r"AADSTS\d+", txt).group(0) + "). Ask RCS IT, or use the screenshot route.")
+        f, n = _onenote_frame(page)
+        if f is not None and n >= MIN_CHARS:
+            frame = f
+            break
+        page.wait_for_timeout(2000)
+    if frame is None:
+        raise T.ReadError("differs", f"No page text appeared in OneNote's frame within {wait} s (still loading, an empty page, "
+                                     "or text that isn't in the page's HTML, which needs the screenshot route). Nothing was collected.",
+                          {})
+    note("OneNote frame found")
+    try:
+        frame.evaluate(SCROLL_JS)
+    except Exception as e:
+        note("couldn't scroll: " + type(e).__name__)
+    info = frame.evaluate(INSPECT_JS)
+    area = (info or {}).get("area")
+    if not area or not area.get("text"):
+        raise T.ReadError("differs", "OneNote's page area wasn't found (the frame text would include menus), so nothing was "
+                                     "collected. Use the screenshot route for this page.", {})
+    text = clean_text(area["text"])
+    items = area.get("items", [])
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    note(f"read {len(text)} characters; {len(items)} non-text element(s)")
+    return {"op": "collect", "read_at": now,
+            "source": {"url": target, "section": (who or {}).get("section", ""), "page": (who or {}).get("page", ""),
+                       "student_hint": (who or {}).get("student_hint", ""), "read_at": now},
+            "page": {"text": text, "chars": len(text), "area": area.get("id") or "page area"},
+            "non_text": items, "non_text_counts": summarise_items(items),
+            "completeness": "unverified", "completeness_note": completeness_note(items, True),
+            "log": []}
+
+
 def run(url, wait=60, signin_wait=240):
     check_url(url)
     try:
@@ -177,43 +219,9 @@ def run(url, wait=60, signin_wait=240):
                 page.wait_for_timeout(3000)
             if not ONENOTE_HOST.search(T._host(page.url)):
                 raise T.ReadError("differs", "The browser ended up on a different site than the notebook page; nothing was read.")
-            frame, end = None, time.time() + wait
-            while time.time() < end:
-                for f in page.frames:
-                    txt = _frame_text(f)
-                    if "AADSTS" in txt:
-                        raise T.ReadError("blocked", "Sign-in is blocked by RCS's policy for this automated Chrome (" +
-                                          re.search(r"AADSTS\d+", txt).group(0) + "). Ask RCS IT, or use the screenshot route.")
-                f, n = _onenote_frame(page)
-                if f is not None and n >= MIN_CHARS:
-                    frame = f
-                    break
-                page.wait_for_timeout(2000)
-            if frame is None:
-                raise T.ReadError("differs", f"No page text appeared in OneNote's frame within {wait} s (still loading, an empty page, "
-                                             "or text that isn't in the page's HTML, which needs the screenshot route). Nothing was collected.",
-                                  {"log": log})
-            note("OneNote frame found")
-            try:
-                frame.evaluate(SCROLL_JS)
-            except Exception as e:
-                note("couldn't scroll: " + type(e).__name__)
-            info = frame.evaluate(INSPECT_JS)
-            area = (info or {}).get("area")
-            if not area or not area.get("text"):
-                raise T.ReadError("differs", "OneNote's page area wasn't found (the frame text would include menus), so nothing was "
-                                             "collected. Use the screenshot route for this page.", {"log": log})
-            text = clean_text(area["text"])
-            items = area.get("items", [])
-            now = datetime.now().astimezone().isoformat(timespec="seconds")
-            note(f"read {len(text)} characters; {len(items)} non-text element(s)")
-            return {"op": "collect", "read_at": now,
-                    "source": {"url": target, "section": (who or {}).get("section", ""), "page": (who or {}).get("page", ""),
-                               "student_hint": (who or {}).get("student_hint", ""), "read_at": now},
-                    "page": {"text": text, "chars": len(text), "area": area.get("id") or "page area"},
-                    "non_text": items, "non_text_counts": summarise_items(items),
-                    "completeness": "unverified", "completeness_note": completeness_note(items, True),
-                    "log": log}
+            out = read_loaded(page, target, who, note, wait)
+            out["log"] = log
+            return out
         finally:
             ctx.close()
 

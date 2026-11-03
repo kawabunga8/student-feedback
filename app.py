@@ -32,6 +32,7 @@ import teams_create
 import vision_read    # handwriting / pictures: a local vision model reads one image, text only
 import forms_import    # Microsoft Forms response exports (read-only, local file)
 import contextlib
+import onenote_class
 import onenote_read    # one typed OneNote page; the browser part is started in its own process
 import teams_read      # parsers and validators only; the browser part is started in its own process
 import jobs
@@ -770,6 +771,103 @@ def enqueue_onenote_job(body):
 ONENOTE_RUNNER = onenote_runner
 
 
+def onenote_class_runner(req, item):
+    """Run onenote_class.py (one Chrome session for the whole class). item(msg) is called for each student as it finishes.
+    Returns {} on success or {'kind', 'error'}. Tests replace this function. Page text is passed to item() only."""
+    if os.environ.get("SF_FORBID_BROWSER"):
+        return {"kind": "setup", "error": "Browser use is switched off (SF_FORBID_BROWSER is set)."}
+    py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
+    proc = subprocess.Popen([py, str(HERE / "onenote_class.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    timer = {"t": None}
+    def arm():
+        if timer["t"]:
+            timer["t"].cancel()
+        timer["t"] = threading.Timer(900, proc.kill); timer["t"].daemon = True; timer["t"].start()
+    try:
+        arm()
+        proc.stdin.write(json.dumps(req) + "\n"); proc.stdin.flush()
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            arm()
+            if "item" in msg:
+                item(msg["item"])
+            elif "ok" in msg:
+                return {} if msg["ok"] else {"kind": msg.get("kind", "error"), "error": msg.get("error", "The class reader failed.")}
+        return {"kind": "error", "error": "The OneNote class reader stopped without finishing."}
+    finally:
+        if timer["t"]:
+            timer["t"].cancel()
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(); proc.stdin.close(); proc.stdout.close()
+
+
+ONENOTE_CLASS_RUNNER = onenote_class_runner
+
+
+def _run_onenote_class_job(queue, job):
+    """One browser session for every student still queued: titles are tried per student; each student is recorded as it
+    finishes (found -> done with the page text in the sidecar; not found -> failed with how many titles were tried)."""
+    req = queue.request_of(job)["request"]
+    students = {s["key"]: s["name"] for s in req["students"]}
+    claimed = {}
+    while not queue.cancel_requested(job["id"]):
+        nxt = queue.next_item(job["id"])
+        if not nxt:
+            break
+        claimed[nxt["key"]] = nxt["idx"]
+    if not claimed:
+        return
+    def item(msg):
+        key = msg.get("key")
+        if key not in claimed:
+            return
+        if msg.get("found"):
+            out = dict(msg["page"]); out.update({"ok": True, "title": msg["title"], "tried": msg["tried"]})
+            queue.item_finished(job, claimed.pop(key), key, "done", result={"collect": out})
+        else:
+            queue.item_finished(job, claimed.pop(key), key, "failed", error=f"{students.get(key, key)}: no page found ({msg.get('tried', 0)} titles tried)",
+                                result={"collect": {"kind": "not_found", "tried": msg.get("tried", 0)}})
+    run = {"base": req["base"], "titles": req["titles"], "sections": req["sections"],
+           "students": [{"key": k, "name": students[k]} for k in claimed]}
+    err = ONENOTE_CLASS_RUNNER(run, item)
+    if err.get("kind") == "sign_in":
+        raise jobs.NeedsSignIn(err.get("error", "Sign in to Microsoft in the Chrome window, then resume."))
+    if err:
+        raise jobs.JobFailed(err.get("error", "The OneNote class reader couldn't finish."))
+
+
+def enqueue_onenote_class_job(body):
+    """body: assignment, base (any page address of the class notebook), titles [page titles to try], sections, students [{name}]."""
+    if QUEUE is None:
+        raise RuntimeError("The job worker isn't running.")
+    aid = str(body.get("assignment", ""))
+    rec = load_assignment_record(aid)
+    rel, _ = session_folder(aid, rec)
+    base = str(body.get("base", "")).strip()
+    try:
+        onenote_read.check_url(base)
+        onenote_class.page_url(base, "A B", "Homework", "T")       # the address must carry a notebook id
+    except teams_read.ReadError as e:
+        raise ValueError(str(e))
+    titles = [" ".join(str(t).split())[:120] for t in (body.get("titles") or []) if str(t).strip()][:40]
+    if not titles:
+        titles = onenote_class.candidate_titles(rec.get("title", ""))[:40]     # from the saved assignment title
+    sections = [" ".join(str(s).split())[:60] for s in (body.get("sections") or ["Homework"]) if str(s).strip()][:4]
+    names = list(dict.fromkeys(" ".join(str((s or {}).get("name", "")).split()) for s in (body.get("students") or []) if isinstance(s, dict)))
+    names = [n for n in names if n][:60]
+    if not (titles and sections and names):
+        raise ValueError("Give at least one page title, one section and one student.")
+    if any(j["state"] in ("queued", "running", "waiting_for_sign_in") for j in QUEUE.list_for(aid, 20) if j["type"] in ("onenote_read", "onenote_class")):
+        raise ValueError("A OneNote read for this assignment is already queued, running or waiting for you to sign in.")
+    students = [{"key": f"s{i + 1}", "name": n} for i, n in enumerate(names)]
+    return QUEUE.enqueue("onenote_class", aid, rel, {"base": onenote_read.read_only(base), "titles": titles, "sections": sections, "students": students},
+                         [{"key": s["key"], "work_sha": ""} for s in students])
+
+
 def myschool_approved(aid, student_id):
     rows = [s for s in approved_for_posting(aid, destination="myschool_pilot") if s["student_id"] == student_id]
     if len(rows) != 1:
@@ -1427,7 +1525,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, "myschool_read": _run_myschool_read_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'myschool_batch_read':_run_myschool_batch_job, 'myschool_batch_inspect':_run_myschool_batch_job, 'myschool_batch_save':_run_myschool_batch_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "onenote_class": _run_onenote_class_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, "myschool_read": _run_myschool_read_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'myschool_batch_read':_run_myschool_batch_job, 'myschool_batch_inspect':_run_myschool_batch_job, 'myschool_batch_save':_run_myschool_batch_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 
@@ -2370,7 +2468,7 @@ class Handler(BaseHTTPRequestHandler):
                                                 "conflict": True, "current": c.current})
                 if self.path.startswith("/api/jobs"):
                     if self.path == "/api/jobs":
-                        enqueue = {"myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job, "teams_batch": enqueue_teams_batch_job, "myschool_batch": enqueue_myschool_batch_job}.get(body.get("type"), enqueue_draft_job)
+                        enqueue = {"myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "onenote_class": enqueue_onenote_class_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job, "teams_batch": enqueue_teams_batch_job, "myschool_batch": enqueue_myschool_batch_job}.get(body.get("type"), enqueue_draft_job)
                         return self._send(200, {"job": _job_view(enqueue(body))})
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:
