@@ -1838,7 +1838,7 @@ $("#assess").onchange = async e => {
   const ci = COURSES.findIndex(c => c.name === cd || courseLabel(c) === cd);
   if(ci >= 0 && String(ci) !== $("#course").value){
     if([...$("#quarter").options].some(o => o.value === qd)) $("#quarter").value = qd;
-    renderCourses(String(ci)); $("#course").value = String(ci); applyCourse(true);
+    renderCourses(String(ci)); $("#course").value = String(ci); $("#course").dispatchEvent(new Event("change", {bubbles:true}));   // the page and the assignment bar both follow
     try { await window.rosterReady; } catch(e){}
   }
   const have = new Set([...document.querySelectorAll(".student")].map(c => c.querySelector(".name").value.trim() + "\n" + c.querySelector(".work").value.trim()));
@@ -1846,7 +1846,7 @@ $("#assess").onchange = async e => {
   const first = document.querySelector(".student");
   if(fresh.length && first && !first.querySelector(".work").value.trim() && !first.querySelector(".name").value.trim()) first.remove();
   let drafts = 0;
-  fresh.forEach(s => { const c = addStudent(s.name, s.work); if(s.feedback && window.insertDraft){ window.insertDraft(c, s.feedback); drafts++; } });   // saved drafts become editable cards
+  fresh.forEach(s => { const c = addStudent(s.name, s.work); if(s.feedback && window.insertDraft){ window.insertDraft(c, s.feedback, 'imported'); drafts++; } });   // saved drafts become editable cards
   const dup = d.students.length - fresh.length, again = dup ? " (" + dup + " already on the page, skipped)" : "";
   if(fresh.length && ROSTER.length) matchAll(true);   // its class-list summary is the more useful status
   else $("#status").textContent = fresh.length + " student" + (fresh.length===1?"":"s") + " loaded from " + path + again + "." +
@@ -1854,6 +1854,7 @@ $("#assess").onchange = async e => {
     (fresh.length ? " Choose a course to match them to the class list, then check the work and click Generate." : "");
   if(fresh.length && ROSTER.length && dup) $("#status").textContent += again;
   applyTeams();
+  if(fresh.length && window.feedbackAssignment && window.feedbackAssignment.autoSetup) window.feedbackAssignment.autoSetup(path);   // link the Teams assignment and save, in the background
 };
 function csvCell(t){ return '"' + String(t).replace(/"/g,'""') + '"'; }
 $("#dlteams").onclick = () => {

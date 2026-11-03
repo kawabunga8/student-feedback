@@ -27,6 +27,8 @@
   const toolbar = make('div', 'review-toolbar'); review.append(toolbar);
   ['add','go'].forEach(id => toolbar.append(document.getElementById(id)));
   const pause = make('button', '', 'Stop after current student'); pause.disabled = true; toolbar.append(pause);
+  const markAll = make('button', '', 'Mark all reviewed'); markAll.type = 'button'; toolbar.append(markAll);
+  const unmarkAll = make('button', '', 'Unreview all'); unmarkAll.type = 'button'; toolbar.append(unmarkAll);
   const search = make('input', 'student-search'); search.placeholder = 'Find a student…'; search.setAttribute('aria-label','Find a student'); toolbar.append(search);
   review.append(document.getElementById('students'));
   const skip = document.getElementById('skipret').closest('label'); review.insertBefore(skip, document.getElementById('students'));
@@ -166,7 +168,7 @@
     let note = c.querySelector('.draft-note');
     if(!out) { if(note) note.remove(); c.classList.remove('outdated'); return; }
     if(!draftBasis.has(out)) draftBasis.set(out, basisNow());
-    const stale = draftBasis.get(out) !== basisNow();
+    const stale = draftBasis.get(out) !== 'imported' && draftBasis.get(out) !== basisNow();   // 'imported': written outside the app, so no basis to compare
     c.classList.toggle('outdated', stale);
     if(stale && !note) {
       note = make('p', 'draft-note', 'The instructions, criteria or Teams rubric setting changed after this draft was written. Regenerate it, or check it still fits, before reviewing. ');
@@ -187,7 +189,7 @@
         approve.onclick = () => {
           if(valid(c)) { approvals.delete(c); note.textContent = ''; refresh(); return; }   // already reviewed: this click un-reviews
           const p = payload(c);
-          if(!p.student_id || !p.level || !p.feedback.trim() || !p.work.trim()) { note.textContent = 'Match a Course Hub student, choose a level, and draft feedback first.'; return; }
+          if(!p.student_id || !p.feedback.trim() || !p.work.trim()) { note.textContent = 'Match a Course Hub student and draft feedback first.'; return; }   // a level is optional (feedback only); MySchool posting asks for one
           if(cards().some(other => other !== c && other.dataset.rid === c.dataset.rid)) { note.textContent = 'Resolve duplicate student cards before review.'; return; }
           approvals.set(c,{bound:JSON.stringify(p),reviewed_at:new Date().toISOString()}); refresh();
         };
@@ -204,9 +206,19 @@
     const text = `${loaded} submissions loaded   /   ${drafted} drafts   /   ${reviewed} reviewed`;
     if(summary.textContent !== text) summary.textContent = text;
     save.disabled = !reviewed;
+    const toReview = all.filter(reviewable).length; markAll.textContent = toReview ? 'Mark all ' + toReview + ' reviewed' : 'Mark all reviewed'; markAll.disabled = !toReview; unmarkAll.disabled = !reviewed;
     pause.disabled = !document.getElementById('go').disabled;
     renderPosting();
   }
+  const reviewable = c => { const p = payload(c); return !!p.student_id && !!p.feedback.trim() && !!p.work.trim() && !valid(c) &&
+    !cards().some(o => o !== c && o.dataset.rid === c.dataset.rid); };
+  markAll.onclick = () => {
+    const todo = cards().filter(reviewable);
+    if(!todo.length) { markAll.title = 'Nothing left to review'; return; }
+    if(!confirm('Mark ' + todo.length + ' draft' + (todo.length === 1 ? '' : 's') + ' as reviewed? Only do this once you have read them.')) return;
+    const at = new Date().toISOString(); todo.forEach(c => approvals.set(c, {bound:JSON.stringify(payload(c)), reviewed_at:at})); refresh();
+  };
+  unmarkAll.onclick = () => { cards().forEach(c => approvals.delete(c)); refresh(); };
   search.oninput = refresh;
   main.addEventListener('input',refresh); main.addEventListener('change',() => setTimeout(refresh,0));
   save.onclick = async () => {

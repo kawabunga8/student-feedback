@@ -918,6 +918,30 @@
     try { const d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); if(!d.error) { sess.status = d.status; renderSess(); } } catch(e) {}
   }
   async function flushSession() { for(let i = 0; i < 20 && sess.busy; i++) await sleep(100); await saveSession(); }
+  // Loading an Assessment folder (…/<course>/<assignment folder>) sets this assignment up by itself: it finds the matching Teams
+  // assignment in the course's confirmed Teams class (folder "task2-define-ideate" matches "Task 2: Define & Ideate"), reads it,
+  // imports its name and instructions, and saves. Read-only in Teams. If anything is unclear it says so and leaves the rest to you.
+  const norm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  let autoBusy = false;
+  window.feedbackAssignment.autoSetup = async path => {
+    if(autoBusy || record) return;                      // an assignment is already open: don't replace what the teacher chose
+    const slug = norm(String(path || '').split('/').pop());
+    try { syncClassPicker(); } catch(e) {}
+    if(!slug || !design.teamsClass) { if(slug) setNote('No confirmed Teams class for this course yet: use Choose from Teams… once to confirm it.', true); return; }
+    autoBusy = true;
+    try {
+      setNote('Finding “' + path.split('/').pop() + '” in Teams (' + design.teamsClass + ')… Chrome opens for this; sign in there if asked.');
+      let hit = null;
+      await startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length;
+        const hits = tItems.filter(x => x.class_name === design.teamsClass && norm(x.title) === slug); hit = hits.length === 1 ? hits[0] : null;
+        tmsg.textContent = hit ? 'Found “' + hit.title + '”.' : hits.length > 1 ? 'More than one Teams assignment matches that folder name.' : 'No assignment in ' + design.teamsClass + ' matches that folder name.'; });
+      if(!hit) { setNote('Couldn’t match this folder to one Teams assignment. Use Choose from Teams… and pick it.', true); return; }
+      parsed = null; await readOne(hit);
+      if(!parsed) { setNote('Couldn’t read the assignment from Teams. Use Choose from Teams….', true); return; }
+      allBtn.onclick();                                   // import name, instructions, course and grade
+      if(await save()) setNote('Set up from Teams: “' + record.title + '” saved (version ' + record.version + '). Your drafts are loaded below.');
+    } finally { autoBusy = false; }
+  };
   window.feedbackAssignment.saveForPosting = async () => {
     await flushSession();
     return !!record && !dirty() && sess.loaded && !sess.hold && !sess.err && sess.sig === JSON.stringify(collect());
