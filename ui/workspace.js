@@ -177,9 +177,10 @@
       if(!c.querySelector('.review-controls')) {
         const box = make('div','review-controls'); const label = make('label','','MySchool comment (review separately)');
         const comment = make('textarea','myschool-comment'); label.append(comment);
-        const approve = make('button','','Mark reviewed'); approve.type = 'button';
+        const approve = make('button','review-toggle','Mark reviewed'); approve.type = 'button';
         const note = make('span','review-state');
         approve.onclick = () => {
+          if(valid(c)) { approvals.delete(c); note.textContent = ''; refresh(); return; }   // already reviewed: this click un-reviews
           const p = payload(c);
           if(!p.student_id || !p.level || !p.feedback.trim() || !p.work.trim()) { note.textContent = 'Match a Course Hub student, choose a level, and draft feedback first.'; return; }
           if(cards().some(other => other !== c && other.dataset.rid === c.dataset.rid)) { note.textContent = 'Resolve duplicate student cards before review.'; return; }
@@ -188,6 +189,7 @@
         box.append(label,approve,note); c.append(box);
       }
       const a = approvals.get(c), ok = valid(c);
+      c.querySelector('.review-toggle').textContent = ok ? 'Unreview' : 'Mark reviewed';
       if(a) c.querySelector('.review-state').textContent = ok ? 'Reviewed · edits require review again' : 'Changed · review again';
       c.classList.toggle('reviewed',ok);
       c.hidden = !c.querySelector('.name').value.toLowerCase().includes(search.value.toLowerCase());
