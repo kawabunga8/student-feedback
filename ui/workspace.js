@@ -168,7 +168,12 @@
     if(!draftBasis.has(out)) draftBasis.set(out, basisNow());
     const stale = draftBasis.get(out) !== basisNow();
     c.classList.toggle('outdated', stale);
-    if(stale && !note) { note = make('p', 'draft-note', 'The instructions, criteria or Teams rubric setting changed after this draft was written. Regenerate it, or check it still fits, before reviewing.'); out.before(note); }
+    if(stale && !note) {
+      note = make('p', 'draft-note', 'The instructions, criteria or Teams rubric setting changed after this draft was written. Regenerate it, or check it still fits, before reviewing. ');
+      const fits = make('button', '', 'It still fits'); fits.type = 'button';       // the teacher's own check: keeps this draft, stops the warning
+      fits.onclick = () => { draftBasis.set(out, basisNow()); refresh(); };
+      note.append(fits); out.before(note);
+    }
     if(!stale && note) note.remove();
   }
   function refresh() {
