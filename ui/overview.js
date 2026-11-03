@@ -11,7 +11,8 @@
     work: ['Add the student’s work', 'attention'], match: ['Match to the class list', 'attention'], duplicate: ['Resolve the duplicate card', 'attention'],
     failed: ['Draft failed: try again or write it yourself', 'attention'], regen: ['Instructions changed: regenerate the draft', 'attention'],
     draft: ['Draft the feedback', 'todo'], level: ['Choose a level yourself', 'todo'], review: ['Read it and mark reviewed', 'todo'],
-    rereview: ['Changed since review: review again', 'todo'], post: ['Reviewed: ready to post', 'ready'], done: ['Done in Teams and MySchool', 'done']};
+    rereview: ['Changed since review: review again', 'todo'], post: ['Reviewed: ready to post', 'ready'], done: ['Done in Teams and MySchool', 'done'],
+    teamsdone: ['Posted to Teams · MySchool next', 'ready'], msdone: ['Saved to MySchool · Teams next', 'ready']};
 
   function classify(i) {
     if(!i.hasWork) return 'work';
@@ -23,12 +24,12 @@
     if(!i.level) return 'level';
     if(i.changed) return 'rereview';
     if(!i.reviewed) return 'review';
-    return i.postedTeams && i.postedMyschool ? 'done' : 'post';
+    return i.postedTeams && i.postedMyschool ? 'done' : i.postedTeams ? 'teamsdone' : i.postedMyschool ? 'msdone' : 'post';
   }
 
   function read(c, cards) {
     const out = c.querySelector('.out'), a = ws.approvals.get(c), ok = ws.valid(c), p = ws.posted.get(c) || {};
-    const fresh = k => !!p[k] && p[k].bound === JSON.stringify(ws.payload(c));
+    const fresh = k => !!p[k] && (ws.tickMatches ? ws.tickMatches(c, k, p[k].bound) : p[k].bound === JSON.stringify(ws.payload(c)));
     const rid = c.dataset.rid || '';
     return {name: c.querySelector('.name').value.trim(), hasWork: !!c.querySelector('.work').value.trim(), matched: !!rid,
       duplicate: !!rid && cards.some(o => o !== c && o.dataset.rid === rid),
@@ -63,7 +64,7 @@
       const r = make('tr', 'overview-' + x.group), who = make('td'), b = make('button', 'linkish', x.i.name || 'Unnamed student'); b.type = 'button';
       b.onclick = () => { x.c.hidden = false; x.c.scrollIntoView({block: 'start'}); const f = x.c.querySelector('.name'); if(f) f.focus({preventScroll: true}); };
       who.append(b);
-      r.append(who, make('td', '', x.i.teamsStatus || '–'), make('td', '', x.i.level || '–'), make('td', '', NEXT[x.stage][0]));
+      r.append(who, make('td', '', x.i.teamsStatus || (x.i.postedTeams ? 'Posted ✓' : '–')), make('td', '', x.i.level || '–'), make('td', '', NEXT[x.stage][0]));
       r.dataset.stage = x.stage; tbody.append(r);
     });
   }

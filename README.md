@@ -17,20 +17,19 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
 - Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
 - Draft locally in the foreground or background. Class overview shows the next action for each student.
-- Preview an approved student's Teams or MySchool destination, then explicitly confirm posting. MySchool offers **one student** or **batch** in Export & posting. Batch posting uses the same per-student approval and read-back checks; live MySchool saving remains unverified.
+- Preview an approved student's Teams or MySchool destination, then explicitly confirm posting. MySchool saves one student or a whole class from one dialog, with the same per-student approval and read-back checks; live MySchool saving remains unverified.
 - Image transcription is an experimental local-vision prototype. Check every line yourself. Open a saved assignment first: each image preview is bound to it, and switching assignments discards the preview instead of adding it to the wrong class.
 
 See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
 
-## Posting reviewed assessments to MySchool
+## Saving reviewed assessments to MySchool
 
-In **Export & posting**, choose **MySchool: one student** or **MySchool: batch**. Save the assignment/session and review the levels and separate MySchool comments first.
+In **Export & posting**, click **Save to MySchool (all)**, or the **MySchool** button on one student's row. Review and save the assignment first. A student's MySchool comment defaults to their Teams feedback (editable on its own) and is part of the review.
 
-For a batch, enter the MySchool assignment address, exact title and course. Select the students to include; unchanged assessments already marked saved start unchecked. Check each student's MySchool name and enter one level per criterion when the assignment has several criteria (`PRF, EXT+`, for example). Leaving levels empty uses the student's reviewed level only for a single-criterion assessment.
+Only the MySchool assignment's **Assessment** address is needed; it is remembered for the assignment. The app reads MySchool in one Chrome session: the assignment's own course, title and publication state (shown as "From MySchool: course → title"; check it is the right assignment), and each student, matched automatically by name. A student it cannot match exactly once is reported, never guessed. Each student's saved level is used for a single-criterion assignment; with several criteria a Levels box appears and you type one level per criterion, in page order (a single level never fills several criteria).
 
-Click **Read MySchool and preview all**, expand each full preview, and check the destination, existing and proposed levels/comments, status, and publication warning. Confirm once, then save the previewed students. Keep the dialog open: it processes students sequentially, marks verified saves, and stops at the first problem. **Stop after current student** lets the current operation finish.
+Expand a student's full preview (each criterion existing → proposed, the whole comment, the status, and a warning if the assignment is published), tick the one confirmation, and save. Each student's approval is re-checked at the moment of writing; the Save click is never retried; a student counts as saved only after MySchool is reopened and the levels, comment and status match, other students are unchanged and the publication setting is preserved. The run stops at the first problem. An uncertain Save needs a check in MySchool before trying again. Live MySchool saving has not yet been verified: try one student first.
 
-An expired preview is refreshed before saving. Changes to identity, publication or assessment values stop the batch and require another preview and confirmation. An uncertain Save is shown separately from students not attempted; check MySchool before reloading or retrying it. Publication is never changed by posting, but an already published assignment may expose saved results immediately.
 
 ## Tests and model quality
 
