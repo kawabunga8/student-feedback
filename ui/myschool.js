@@ -104,6 +104,7 @@
   const graded=field('Also set each student’s status to Graded',el('input'));graded.type='checkbox';
   const refresh=el('button','Load reviewed students');refresh.type='button';form.append(refresh);
   const message=el('p');message.setAttribute('role','status');dlg.append(message);
+  const pubNote=el('p');pubNote.setAttribute('role','status');pubNote.style.fontWeight='600';dlg.append(pubNote);
   const table=el('div');table.className='myschool-bulk-rows';dlg.append(table);
   const previewAll=el('button','Read MySchool and preview all');previewAll.type='button';previewAll.disabled=true;dlg.append(previewAll);
   const confirm=el('input');confirm.type='checkbox';const confirmText=el('span');const confirmLabel=el('label');confirmLabel.append(confirm,confirmText);dlg.append(confirmLabel);
@@ -116,12 +117,21 @@
   function draw() {
     table.replaceChildren();
     rows.forEach(r => {
-      const line=el('div');line.style.margin='6px 0';
-      const label=el('strong',r.name+' — '+r.level+'  ');
-      r.nameInput.disabled=busy||r.state==='saved';
-      const status=el('span',r.state==='saved'?'✓ saved and verified':r.state==='previewed'?'ready: '+(r.preview.criteria||[]).map(c=>(c.existing||'ungraded')+' → '+c.chosen).join(', ')+' · comment: '+(r.comment||'').slice(0,60):r.error?'⚠ '+r.error:r.state==='working'?'working…':'not previewed');
-      line.append(label,r.nameInput,el('br'),status);table.append(line);
+      const line=el('div');line.style.margin='8px 0';
+      const label=el('strong',r.name+' — '+(r.level||'no level')+'  ');
+      r.nameInput.disabled=busy||r.state==='saved';r.levelsInput.disabled=busy||r.state==='saved';
+      const status=el('span',r.state==='saved'?'✓ saved and verified':r.state==='previewed'?'ready to save':r.error?'⚠ '+r.error:r.state==='working'?'working…':'not previewed');
+      line.append(label,r.nameInput,r.levelsInput,el('br'),status);
+      if(r.state==='previewed'&&r.preview){   // the full change, as the one-student pilot shows it: each criterion, the whole comment, the status
+        const p=r.preview,det=el('details'),sum=el('summary','Full preview: '+(p.criteria||[]).map(c=>(c.existing||'ungraded')+' → '+c.chosen).join(', '));det.append(sum);
+        (p.criteria||[]).forEach((c,i)=>det.append(el('div',(i+1)+'. '+(c.label||'(no label found)')+': '+(c.existing||'ungraded')+' → '+c.chosen)));
+        det.append(el('div','Comment — existing: '+((p.existing&&p.existing.comment)||'(empty)')),el('div','Comment — will save: '+p.comment),el('div',p.mark_graded?'Status will be set to Graded.':'Status will be preserved.'));
+        line.append(det);
+      }
+      table.append(line);
     });
+    const pub=ready().filter(r=>r.preview.publication!=='0').length;
+    pubNote.textContent=pub?'This assignment is published: saved results may be visible to students immediately under its existing settings. Publication is not changed.':ready().length?'This assignment is unpublished and will stay unpublished.':'';
     const n=ready().length;
     confirmText.textContent=' I checked all '+n+' previews (assignment, course, each student, level and comment). Save these '+n+' students to MySchool, one after another.';
     previewAll.disabled=busy||!rows.length||!url.value.trim()||!title.value.trim()||!course.value.trim();
@@ -146,7 +156,8 @@
     }
     throw Error('Timed out waiting for MySchool. Check MySchool before retrying.');
   }
-  const inspectBody=(owner,r)=>({type:'myschool',op:'inspect',assignment:owner,student_id:r.id,url:url.value.trim(),title:title.value.trim(),course:course.value.trim(),target_name:r.nameInput.value.trim(),mark_graded:graded.checked});
+  const inspectBody=(owner,r)=>({type:'myschool',op:'inspect',assignment:owner,student_id:r.id,url:url.value.trim(),title:title.value.trim(),course:course.value.trim(),target_name:r.nameInput.value.trim(),mark_graded:graded.checked,
+    ...(r.levelsInput.value.trim()?{codes:r.levelsInput.value.trim()}:{})});   // empty: the student's own level (single-criterion assignments); several criteria need one level each, typed here
   async function load(){
     const owner=aid(),token=++generation;rows=[];draw();
     if(!owner){message.textContent='Open a saved assignment first.';return;}
@@ -154,7 +165,9 @@
       await flush();const d=await(await fetch('/api/myschool/approved?assignment='+encodeURIComponent(owner))).json();if(d.error)throw Error(d.error);
       if(owner!==aid()||token!==generation)return;
       rows=(d.students||[]).map(s=>{const nameInput=el('input');nameInput.value=s.name;nameInput.setAttribute('aria-label','MySchool name for '+s.name);
-        return {id:s.student_id,name:s.name,level:s.level,comment:s.myschool_comment||'',nameInput,state:'',preview:null,error:''};});
+        const levelsInput=el('input');levelsInput.placeholder='Levels, one per criterion in page order (e.g. PRF, EXT+). Empty = '+(s.level||'no level')+' for a single criterion';levelsInput.setAttribute('aria-label','MySchool levels for '+s.name);
+        const reset=()=>{const r=rows.find(x=>x.nameInput===nameInput);if(r&&r.state!=='saved'){r.state='';r.preview=null;r.error='';confirm.checked=false;draw();}};nameInput.onchange=reset;levelsInput.onchange=reset;
+        return {id:s.student_id,name:s.name,level:s.level,comment:s.myschool_comment||'',nameInput,levelsInput,state:'',preview:null,error:''};});
       message.textContent=rows.length?rows.length+' reviewed students. Check each name matches MySchool exactly, fill in the assignment details, then preview all.':'No current saved approvals. Review each student and their MySchool comment first.';
       draw();
     }catch(e){if(owner===aid()&&token===generation)message.textContent=e.message;}

@@ -81,7 +81,8 @@ def target_of(state, request):
     if not re.fullmatch(r'\d+', student.get('id','')) or n < 1:
         raise PilotError('This student has no criteria on the MySchool page. Nothing was saved.')
     if n != len(codes):
-        raise PilotError(f'This student has {n} criteria on the MySchool page but {len(codes)} level(s) were given. Give one level per criterion, in page order. Nothing was saved.')
+        names = '; '.join((c.get('label') or '(unnamed)') for c in student['criteria'])[:160]
+        raise PilotError(f'This student has {n} criteria on the MySchool page ({names}) but {len(codes)} level(s) were given. Give one level per criterion, in that order. Nothing was saved.')
     values = []
     for criterion, code in zip(student['criteria'], codes):
         if not re.fullmatch(r'grade_\d+_\d+', criterion.get('input','')):
@@ -117,6 +118,12 @@ def open_assessment(page, request):
     page.locator('.evaluation_group textarea[id^="submission_comment_"]').first.wait_for(state='visible', timeout=20000)
     if canonical_url(page.url) != url:
         raise PilotError('MySchool navigated to a different assignment. Nothing was saved.')
+    count, steady, end = -1, 0, time.time() + 12       # the cards can keep arriving after the first one is visible
+    while steady < 3 and time.time() < end:
+        now = page.locator('.evaluation_group').count()
+        steady = steady + 1 if now == count else 0
+        count = now
+        page.wait_for_timeout(600)
     return page.evaluate(INSPECT)
 
 def operate(page, request, authorize=contextlib.nullcontext):
@@ -161,11 +168,17 @@ def operate(page, request, authorize=contextlib.nullcontext):
         save = page.get_by_role('button', name=re.compile('^save$', re.I))
         if save.count() != 1:
             raise PilotError('A unique Save button was not found. Nothing was saved.')
+        if canonical_url(page.url) != canonical_url(request['url']):      # same check as Teams: the page must still be this assignment
+            raise PilotError('MySchool moved to a different assignment before Save. Nothing was saved.')
         # Do not retry this click. A connection failure after it is an uncertain outcome.
         save.click()
         page.wait_for_timeout(1500)
-        after = open_assessment(page, request)
-        saved, _ = target_of(after, request)
+        unverified = 'Save may have run, but MySchool could not be read back to confirm it. Check MySchool before trying again.'
+        try:
+            after = open_assessment(page, request)
+            saved, _ = target_of(after, request)
+        except PilotError:
+            raise PilotError(unverified) from None      # these checks' own messages say "Nothing was saved", which is no longer known
         if not matches(saved, desired) or after['publication'] != state['publication'] or [s for s in after['students'] if s['id'] != student['id']] != before_other:
             raise PilotError('Save could not be verified. Check MySchool before trying again.')
         return {'verified':True, 'already_matching':False, 'publication':after['publication']}

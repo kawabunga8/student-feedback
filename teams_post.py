@@ -110,7 +110,12 @@ def operate(page, req, authorize=contextlib.nullcontext):
         button.click()
         # Reopen from the roster's Returned tab: the button click alone is never success.
         page.wait_for_timeout(2000)
-        _, check_editor, after = open_target(page, req, returned=True)
+        try:
+            _, check_editor, after = open_target(page, req, returned=True)
+        except PilotError as e:
+            if 'Return' in str(e) or 'Check Teams' in str(e):
+                raise
+            raise PilotError('Return may have run, but Teams could not be read back to confirm it. Check Teams before trying again.') from None   # open_target's own "Nothing was posted" no longer holds
         if after['submission_id'] != state['submission_id'] or check_editor.inner_text().strip() != req['feedback'].strip():
             raise PilotError('Return could not be verified. Check Teams before trying again.')
         return {'verified':True, 'returned':True, 'submission_id':after['submission_id'], 'read_at':time.time()}
