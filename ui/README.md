@@ -1,4 +1,4 @@
-# Current workspace prototypes (2026-11-02)
+# Current workspace prototypes (2026-11-03)
 
 Use WORKFLOW.md's current summary for verification status. The historical implementation notes below describe earlier builds.
 
@@ -18,7 +18,7 @@ The workspace wraps the existing course, import, generation and CSV endpoints.
 - Collect: file uploads (including Forms exports), Assessment-folder import, typed OneNote page collection and the image-transcription card. Collection is read-only and its completeness is always unverified.
 - Draft & review: existing student cards and editable drafts, student search, teacher-selected levels,
   separate MySchool comments, explicit review marks and stop after the current generation request.
-- Export & posting: CSV exports, a reviewed JSON snapshot, copy-and-tick assisted posting, and explicit one-student Teams and MySchool posting pilots (preview, confirmation, read-back; live posting unverified). Bulk posting is disabled.
+- Export & posting: a compact per-student status table with **Post to all (Teams)**, **Check Teams**, **Save to MySchool (all)** and per-row **Post** / **MySchool** buttons (one student or the class, one engine per destination, confirmed once, verified by read-back); CSV exports, a reviewed JSON snapshot and the copy-and-tick list kept as a collapsed fallback. See "Posting and setup, 2026-11-03" at the end. Live-verified on one class (2026-11-03).
 
 Review marks bind student identity, source text, private notes, feedback, level, MySchool comment,
 assignment instructions, selected standard labels, grade, course, school year and quarter. Editing these
@@ -138,7 +138,7 @@ reader. **Not yet run end to end through the app against live Teams**; the spike
 read one class and one assignment on 2026-11-01. Extraction is not marked complete until the full output has been
 compared with Teams by eye.
 
-Teams posting pilot (2026-11-02): Export & posting → Post reviewed feedback to Teams. One saved, approved student; read-only preview followed by explicit confirmation and Return. The preview shows destination, existing feedback and exact approved feedback. It may replace existing feedback; Return may notify the student. A verified receipt requires reopening the same submission under Returned. No bulk posting or automatic retries. Synthetic coverage is in tests/test_teams_post.py; live posting is not yet verified.
+*Superseded 2026-11-03 by the one-session posting dialog (see the end of this file).* Teams posting pilot (2026-11-02): Export & posting → Post reviewed feedback to Teams. One saved, approved student; read-only preview followed by explicit confirmation and Return. The preview shows destination, existing feedback and exact approved feedback. It may replace existing feedback; Return may notify the student. A verified receipt requires reopening the same submission under Returned. No bulk posting or automatic retries. Synthetic coverage is in tests/test_teams_post.py; live posting is not yet verified.
 
 ## Create an unpublished Teams draft (2026-11-03)
 
@@ -152,6 +152,23 @@ For a failed attempt that left an empty draft, paste that draft’s editor URL i
 
 In Design, choose Create assignment in MySchool. The app saves the student-facing design first. Load MySchool courses, choose the exact course, choose Formative/Summative and enter a due date. Read MySchool form and preview lists its learning outcomes; select at least one, review defaults and confirm Save unpublished assignment to MySchool. Publish is No, scheduled publication blank and Email students off. No grades/comments or attachments are added. A verified receipt appears after destination read-back and is shown again when the dialog is reopened. Later local edits are not automatically sent to a created assignment. An uncertain Save must be checked in MySchool before retrying.
 
-## MySchool: several students (2026-11-03)
+## MySchool: several students (2026-11-03) — superseded the same day by the one-session dialog below
 
 Export & posting → **Post all reviewed assessments to MySchool…** (in `ui/myschool.js`). It adds no new posting path: it drives the one-student pilot's own `/api/jobs` preview and Save for each reviewed student in turn, so each student keeps the server approval check, single-use preview claim and read-back. The teacher enters the assignment address, exact title and course once and can correct each student's MySchool name. **Read MySchool and preview all** is read-only; one confirmation then covers the previewed students; Save runs one at a time and **stops at the first problem** (a student whose Save outcome is unclear must be checked in MySchool before trying again). A preview older than 8 minutes is re-read and must show identical values before Save. Levels come from each student's teacher-selected level, so it suits one-criterion assignments (others fail per student with the pilot's own message). `AUTOMATED_POSTING` stays off. Checked in a browser with mocked job responses only (preview all, one excluded student, stop at a failed save, stale-preview re-read); never run against live MySchool, and live saving is still unverified.
+
+
+## Posting and setup, 2026-11-03
+
+**Load an Assessment folder (Collect).** `/api/load` returns each student's work and, when a `<name>.feedback.md` sits beside it, that draft (the `# Feedback:` heading and the footer are dropped; files starting with `_` are notes, not students). The page picks the course and quarter from the folder path, loads the Course Hub class list, matches students by name, puts each draft on its card as an editable, never-"outdated" draft (`insertDraft(card, text, 'imported')`), then runs `feedbackAssignment.autoSetup(path)`: it lists the assignments Teams shows (read-only, all of Upcoming, Ready to grade, Past due and Returned), finds the one in the course's confirmed Teams class whose title matches the folder name ignoring punctuation (`task2-define-ideate` = "Task 2: Define & Ideate"), reads it, imports the name and instructions, and saves. It asks you only if nothing, or more than one, matches.
+
+**Review.** The review button toggles Mark reviewed / Unreview; **Mark all reviewed** and **Unreview all** act on the class. A level is optional. A draft flagged "possibly outdated" has **It still fits**. Each student's MySchool comment (`.myschool-comment`) defaults to their feedback and follows later edits until you type in it; an empty one is refilled.
+
+**Posted marks.** A "done" mark records what was posted. `tickMatches(card, kind, bound)` ignores fields the destination never receives (a Teams mark ignores the MySchool comment and level), so editing one destination's text cannot make the other look out of date. A verified post sets the mark itself (`markPosted(id, kind, expectedBound)`); the Class overview reads the same marks ("Posted to Teams · MySchool next").
+
+**Export & posting table (`ui/workspace.js`).** One line per student: level, a Teams chip (Ready to post, Posted, Returned in Teams, Changed after posting, Not reviewed), a MySchool chip (only when a comment exists), and **Post** / **MySchool** buttons. **Check Teams** runs the existing status job, which now also reads the Returned tab.
+
+**Post to Teams (`ui/teams_post.js`, `teams_batch.py`).** `window.postToTeams(ids)` (null = everyone not yet posted) opens one dialog and reads Teams by itself via one `teams_batch_inspect` job; results arrive per student as the job's items complete. A second `teams_batch_save` job, started after your one confirmation, posts the ready students in order in the same Chrome session and verifies each (see README). The old one-student card is removed.
+
+**Save to MySchool (`ui/myschool.js`, `myschool_batch.py`).** `window.postToMySchool(ids)` does the same for MySchool via `myschool_batch_inspect` / `myschool_batch_save`. Only the Assessment address is entered (remembered per assignment); the assignment's title, course and publication state are read from the page and shown for you to check; students are matched to MySchool names automatically; a Levels box appears only when the assignment has several criteria. Previews show each criterion, the whole comment, the status and a published-assignment warning.
+
+**Job plumbing.** The batch jobs run one child process per job and stream a JSON line per student (`authorize` before each write, `item` per result, `header` for the MySchool assignment). The parent holds the save lock from `authorize` until that student's `item`, re-checks the approval (a digest of the approved values, not the posting ticks), and kills the child if it goes quiet. Items not reported when the child ends are marked "Not attempted".

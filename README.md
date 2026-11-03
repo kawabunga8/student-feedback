@@ -16,11 +16,21 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Create an unpublished ordinary assignment in Teams from Design: review the class/title/instructions, confirm, then check the verified Drafts receipt. Publishing, attachments and Forms quiz creation are separate and not automated.
 - Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
 - Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
-- Draft locally in the foreground or background. Class overview shows the next action for each student.
-- Preview an approved student's Teams or MySchool destination, then explicitly confirm posting. MySchool saves one student or a whole class from one dialog, with the same per-student approval and read-back checks; live MySchool saving remains unverified.
+- Load an Assessment folder (`Assessment/<year>/<quarter>/<course>/<assignment>`) and the app sets itself up: it picks the course and quarter and the class list from Course Hub, finds the matching assignment in that course's confirmed Teams class (read-only), imports its name and instructions, saves the assignment, and loads any `<name>.feedback.md` drafts beside each student's work as editable cards.
+- Draft locally in the foreground or background, or load drafts made by `feedback.py` (below). Class overview shows the next action for each student, including per-destination progress (posted to Teams, saved to MySchool).
+- Review: **Mark all reviewed** / **Unreview all**, or each student's own toggle. A level is optional (feedback only) for Teams; MySchool needs one. A student's MySchool comment defaults to their feedback and stays editable.
+- Post to Teams and save to MySchool, each for one student or the whole class, on one engine per destination that reads and writes in a single Chrome session. Every write is confirmed once, re-checks that student's approval at the moment of writing, and is verified by reading the destination back. See the two sections below.
 - Image transcription is an experimental local-vision prototype. Check every line yourself. Open a saved assignment first: each image preview is bound to it, and switching assignments discards the preview instead of adding it to the wrong class.
 
 See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
+
+**Verified live (2026-11-03, ICT 9 Q1 Task 2, 18 students):** posting and Returning feedback in Teams, and saving levels, comments and Graded status in MySchool, each confirmed by reading the destination back. Not verified: what a Teams Return sends to the student, behaviour on other assignment layouts, MySchool assignments with several criteria, and the Playwright suites for the new dialogs (they need a browser install and were not run).
+
+## Posting reviewed feedback to Teams
+
+In **Export & posting**, click **Post** on a student's row for one student, or **Post to all (Teams)** for the class (it skips students already posted). The dialog opens and reads Teams by itself, in one Chrome session: students already **Returned** are skipped, a name that is not on the roster is flagged, and each remaining student shows ready, with a warning if feedback is already there that posting would replace. Nothing is changed while reading.
+
+Tick the one confirmation and post. For each student the app re-checks their approval, confirms the feedback in Teams is still what the preview showed, types the approved feedback, checks the editor kept it, clicks **Return** (which may notify the student), and then verifies: the roster lists the student under **Returned**, and the feedback Teams actually kept, read back from the Returned panel, matches the approved text. The first problem stops the run; students after it are not attempted. **Check Teams** reads who is already Returned (read-only) and updates the table. Names come from Course Hub as "Last, First"; the app asks you to type a name only when it cannot find the student.
 
 ## Saving reviewed assessments to MySchool
 
@@ -30,6 +40,10 @@ Only the MySchool assignment's **Assessment** address is needed; it is remembere
 
 Expand a student's full preview (each criterion existing → proposed, the whole comment, the status, and a warning if the assignment is published), tick the one confirmation, and save. Each student's approval is re-checked at the moment of writing; the Save click is never retried; a student counts as saved only after MySchool is reopened and the levels, comment and status match, other students are unchanged and the publication setting is preserved. The run stops at the first problem. An uncertain Save needs a check in MySchool before trying again. Live MySchool saving has not yet been verified: try one student first.
 
+
+## Drafting from the command line
+
+`feedback.py` writes one `<name>.feedback.md` per student. Before drafting it asks the local model, per criterion in your rubric's "Looking for" list, whether the work already does it, and the model must quote the evidence, which the code checks against the work. Criteria already met are credited and not asked for again; a draft that still asks for them is retried. Options: `--notes <folder>` (private `<name>.txt` notes per student), `--no-check` (skip that check), `--lean` (send a one-line assignment aim instead of the full rubric; tested, mixed results), `--length`, `--level`. A draft is a starting point: read each one. Put the drafts beside the staged work as `<same name>.feedback.md` and loading the folder in the app shows them as editable cards.
 
 ## Tests and model quality
 
@@ -110,6 +124,8 @@ school year's courses and quarter dates. The term is picked from today's date an
 course list is filtered to that quarter. Departments (which learning-standards PDF to
 use) are assigned by `department_rules` in `courses.json`.
 
+The link from a Teams class to a Course Hub course (for example `RCS - H - Q1 ICT 9 [2026-27]` → ICT 9 (Q1)) is confirmed once and kept in `~/Library/Application Support/student-feedback/class-map.json`. When a course has exactly one confirmed class, the app uses it automatically (the Design step's Intended Teams class, the Choose from Teams list filter, and loading an Assessment folder). A wrong confirmation (a different class mapped to the same course) makes the app offer a choice or link the wrong class: delete that entry from the file and restart. The posting steps work from the saved assignment's Teams class and assignment ids, so check the class named in the assignment bar before posting.
+
 Setup (one time). The key is read server-side only and never sent to the browser:
 
 ```bash
@@ -128,7 +144,7 @@ If Course Hub is unreachable the page says so and falls back to:
 - `jobs.py` - background job queue (drafting, Teams/OneNote reads, posting jobs). `ui/` - the workspace's scripts and styles; see `ui/README.md`.
 - `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader.
 - `forms_import.py` - Microsoft Forms response-export parser (local file, no network). `vision_read.py` - local vision-model image transcription.
-- `teams_post.py`, `myschool_post.py` - per-student posting workers (preview, confirmation, read-back); the UI uses these same workers for sequential batches.
+- `teams_batch.py`, `myschool_batch.py` - the one-session posting engines for Teams and MySchool (read, preview, post/save, verify; one student or a whole class). `teams_post.py`, `myschool_post.py` - the earlier one-student workers; the engines reuse their page helpers and safeguards.
 - `stage_submissions.py` - stages collected files into the Assessment folder. `check_session_folder.py` - checks macOS lets the app save there.
 - `tools/` - spikes, `draft_quality.py` and `transcribe_check.py` (real-model measurements). `tests/` - synthetic-data suites; see `tests/README.md`.
 - `standards/` - 2026-27 learning-standards PDFs (parsed on load).

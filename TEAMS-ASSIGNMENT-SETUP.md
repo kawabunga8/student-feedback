@@ -127,3 +127,7 @@ should:
   as drafts.)
 - Exact tag/label convention for recording the targeted learning standard per
   assignment (title prefix vs. instructions line vs. a separate tracking sheet).
+
+## Folder names and automatic setup (2026-11-03)
+
+When you load an Assessment folder, the app finds the Teams assignment whose title matches the folder name, ignoring case and punctuation (`task2-define-ideate` matches "Task 2: Define & Ideate"), inside the Teams class confirmed for the course. Name the folder after the Teams assignment title so this works unattended. The assignment must appear in Teams' Assignments list under Upcoming, Ready to grade, Past due or Returned. If the class link is wrong, fix `class-map.json` (see the README) before posting.
