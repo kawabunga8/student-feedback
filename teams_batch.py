@@ -107,6 +107,14 @@ def in_returned_tab(page, f, name):
         show_tab(f, page, 'To return')
 
 
+def s_frame(page, f):
+    """The roster frame as it is now (the old handle can go stale after navigating between tabs and panels)."""
+    for fr in page.frames:
+        if T.FRAME_HOST in T._host(fr.url):
+            return fr
+    return f
+
+
 def tab_names(page, s, name):
     """The names listed under one roster tab, once its rows add up to the tab's own count; None if that never happens."""
     show_tab(s.frame(), page, name)
@@ -117,6 +125,36 @@ def tab_names(page, s, name):
             return {r['name'].strip().lower() for r in got['students']}
         page.wait_for_timeout(700)
     return None
+
+
+def saved_feedback(page, f, name):
+    """Read-only: open this Returned student's panel from the Returned tab and read the feedback Teams actually kept.
+    Returns the text, or None if the panel could not be read. Leaves the roster on To return."""
+    try:
+        show_tab(f, page, 'Returned')
+        if not on_tab(f, name, 15000):
+            return None
+        page.mouse.move(2, 2)
+        cell = f.get_by_text(name, exact=True).first
+        try:
+            cell.click(timeout=4000)
+        except Exception:
+            cell.dispatch_event('click')
+        anchor = f.locator('#editorAnchor')
+        anchor.wait_for(state='attached', timeout=20000)
+        box = f.get_by_role('textbox', name='Feedback', exact=True)
+        if box.count() != 1:
+            raise PilotError('Feedback box not found.')
+        text = box.inner_text()
+        close_panel(page, f)
+        return text
+    except Exception:
+        return None
+    finally:
+        try:
+            show_tab(f, page, 'To return')
+        except Exception:
+            pass
 
 
 def one_student(page, f, req, st, mode, ask, known):
@@ -169,7 +207,13 @@ def one_student(page, f, req, st, mode, ask, known):
         raise PilotError('Return may have run, but Teams could not be read back to confirm it. Check Teams before trying again.') from None
     if not done:
         raise PilotError('Return may have run, but the roster does not list this student under Returned. Check Teams before trying again.')
-    return {'student_id': sid, 'submission_id': submission_id, 'verified': True, 'read_at': time.time()}
+    # Two different checks: the editor was verified before Return (what was entered); now what Teams KEPT is read back.
+    kept = saved_feedback(page, s_frame(page, f), st['target_name']) or saved_feedback(page, s_frame(page, f), st['target_name'])
+    if kept is None:
+        raise PilotError('Returned, but the feedback Teams saved could not be read back to confirm it. Check this student in Teams before trying again.')
+    if ' '.join(kept.split()) != ' '.join(st['feedback'].split()):
+        raise PilotError('Returned, but the feedback saved in Teams does not match the approved text. Check this student in Teams.')
+    return {'student_id': sid, 'submission_id': submission_id, 'verified': True, 'feedback_matches': True, 'read_at': time.time()}
 
 
 def run_many(req, ask, emit):

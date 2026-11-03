@@ -95,7 +95,7 @@
     rows.forEach(r=>{
       const line=el('div');line.style.margin='6px 0';
       r.nameInput.disabled=busy||r.state==='posted';
-      const status=r.state==='posted'?'✓ posted and Returned (verified)':r.state==='ready'?'ready'+(r.existing?' · replaces the feedback already there':''):r.state==='skipped'?'already Returned in Teams: skipped':r.state==='working'?'working…':r.state==='error'?'⚠ '+r.error:'waiting';
+      const status=r.state==='posted'?'✓ posted, Returned, and the saved feedback matches':r.state==='ready'?'ready'+(r.existing?' · replaces the feedback already there':''):r.state==='skipped'?'already Returned in Teams: skipped':r.state==='working'?'working…':r.state==='error'?'⚠ '+r.error:'waiting';
       line.append(el('strong',r.name+'  '),r.nameInput,el('br'),el('span',status));table.append(line);
     });
     const n=ready().length;
@@ -111,7 +111,7 @@
       const j=(await(await fetch('/api/jobs/'+jobId)).json()).job;if(!j)throw Error('Job not found. Check Teams.');
       const drafts=new Map((j.drafts||[]).map(d=>[d.key,d.teams_batch]));
       (j.items||[]).forEach(it=>onItem(it,drafts.get(it.key),j));draw();
-      if(['queued','running'].includes(j.state)){message.textContent='Working in Teams… Chrome is open for this one session; sign in there if asked.';await pause();continue;}
+      if(['queued','running'].includes(j.state)){message.textContent=(previewJob?'Posting: each student is re-checked, written, then verified (Returned, and the feedback Teams kept is read back)… ':'Identifying eligible students and reading Teams… ')+'Chrome is open for this one session; sign in there if asked.';await pause();continue;}
       if(j.state==='waiting_for_sign_in')throw Error('Teams needs you to sign in, in the Chrome window. Then try again.');
       return j;
     }
@@ -148,7 +148,7 @@
     }catch(e){problem=problem||e.message;todo.forEach(r=>{if(r.state==='working'){r.state='error';r.error=e.message;}});}
     finally{busy=false;confirm.checked=false;previewJob='';draw();}
     const left=todo.filter(r=>r.state!=='posted').map(r=>r.name);
-    message.textContent=(done.length?'Posted and Returned (verified): '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done: each is marked as posted.');
+    message.textContent=(done.length?'Posted, Returned and verified: '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done: each is marked as posted.');
     draw();
   }
   again.onclick=readTeams;save.onclick=postAll;
