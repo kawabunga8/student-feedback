@@ -64,9 +64,8 @@
   const bPostTeams = make('button','primary','Post to all (Teams)'); bPostTeams.type = 'button'; bPostTeams.onclick = () => { if(window.postToAll) window.postToAll(); };
   const bCheck = make('button','','Check Teams'); bCheck.type = 'button'; bCheck.title = 'Read who is already Returned in Teams (read-only).';
   bCheck.onclick = () => { const b = document.getElementById('teams-status-read'); if(b) b.click(); else postSummary.textContent = 'Open or save an assignment first.'; };
-  const bPostMsOne = make('button','','MySchool: one student'); bPostMsOne.type = 'button'; bPostMsOne.onclick = () => window.postOneMySchool?.();
-  const bPostMs = make('button','','MySchool: batch'); bPostMs.type = 'button'; bPostMs.onclick = () => window.postToAllMySchool?.();
-  postActions.append(bPostTeams, bCheck, bPostMsOne, bPostMs);
+  const bPostMs = make('button','','Save to MySchool (all)'); bPostMs.type = 'button'; bPostMs.onclick = () => window.postToMySchool?.(null);
+  postActions.append(bPostTeams, bCheck, bPostMs);
   const postTable = make('table','posting-table'); posting.append(postTable);
   const manual = make('details','posting-manual'); manual.append(make('summary','','Do it by hand (copy and tick)')); posting.append(manual);
   const links = make('div','posting-links'); posting.append(links);
@@ -92,10 +91,17 @@
   const surname = n => { n = (n || '').trim(); return (n.includes(',') ? n.split(',')[0] : n.split(/\s+/).pop() || '').toLowerCase(); };
   const copy = async (text, btn) => { try { await navigator.clipboard.writeText(text); const was = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => btn.textContent = was, 1200); }
                                       catch(e) { const was = btn.textContent; btn.textContent = 'Copy failed'; setTimeout(() => btn.textContent = was, 2000); } };
+  // A "done" mark records what was posted. Teams gets the feedback, so a later change to the MySchool comment or the level must not
+  // make a Teams post look out of date (and the other way round for MySchool).
+  const TICK_IGNORES = {teams:['myschool_comment','level'], myschool:[]};
+  function tickMatches(c, kind, bound) {
+    try { const a = JSON.parse(bound), b = payload(c); (TICK_IGNORES[kind] || []).forEach(k => { delete a[k]; delete b[k]; }); return JSON.stringify(a) === JSON.stringify(b); }
+    catch(e) { return false; }
+  }
   function postState(c, kind) {
     const d = (posted.get(c) || {})[kind];
     if(!d) return {done:false, text:'', stale:false};
-    const stale = d.bound !== JSON.stringify(payload(c));
+    const stale = !tickMatches(c, kind, d.bound);
     return {done:true, stale, at:d.at, text: stale ? 'Changed after posting: update it in ' + NAMES[kind] + ', then tick again'
                                                     : 'Done ' + new Date(d.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})};
   }
@@ -175,13 +181,14 @@
     const done = count(data, d => d.t[1] === 'good' || d.t[1] === 'soft'), ready = count(data, d => d.t[1] === 'ready'), waiting = count(data, d => d.t[1] === 'muted'), changed = count(data, d => d.t[1] === 'warn');
     postSummary.textContent = n ? 'Teams: ' + done + ' of ' + n + ' done · ' + ready + ' ready to post' + (waiting ? ' · ' + waiting + ' not reviewed' : '') + (changed ? ' · ' + changed + ' changed since posting' : '') +
       (showMs ? ' · MySchool: ' + count(data, d => d.m[1] === 'good') + ' of ' + n + ' saved' : '') : 'No students yet. Load an Assessment folder first.';
-    bPostTeams.disabled = !ready && !changed; bPostMs.disabled = bPostMsOne.disabled = !showMs;
+    bPostTeams.disabled = !ready && !changed; bPostMs.disabled = !showMs;
     const th = (t) => { const e = make('th','',t); e.scope = 'col'; return e; };
     const head = make('tr'); head.append(th('Student'), th('Level'), th('Teams')); if(showMs) head.append(th('MySchool')); head.append(th(''));
     const chip = ([t, k]) => { const td = make('td'); td.append(make('span','chip ' + k, t)); return td; };
     const body = data.map(d => { const tr = make('tr'); tr.append(make('td','', d.name), make('td','posting-lvl', d.level ? d.level + (levelCode(d.level) ? ' (' + levelCode(d.level) + ')' : '') : '—'), chip(d.t)); if(showMs) tr.append(chip(d.m));
       const act = make('td','posting-act');   // post just this student (the same engine as Post to all)
       if(d.id && (d.t[1] === 'ready' || d.t[1] === 'warn')) { const b = make('button','','Post'); b.type = 'button'; b.title = 'Post only this student to Teams'; b.onclick = () => { if(window.postToTeams) window.postToTeams([d.id]); }; act.append(b); }
+      if(d.id && showMs && (d.m[1] === 'ready' || d.m[1] === 'warn') && d.m[0] !== 'Needs a level') { const b2 = make('button','','MySchool'); b2.type = 'button'; b2.title = 'Save only this student to MySchool'; b2.onclick = () => { if(window.postToMySchool) window.postToMySchool([d.id]); }; act.append(b2); }
       tr.append(act); return tr; });
     postTable.replaceChildren(make('thead','')); postTable.firstChild.append(head); const tb = make('tbody',''); tb.append(...body); postTable.append(tb);
   }
@@ -311,6 +318,6 @@
   // A verified post records the same "done" tick the teacher would tick by hand: bound to the exact reviewed values.
   const markPosted = (sid, kind, expectedBound) => { const c = cards().find(x => payload(x).student_id === sid); if(!c || !valid(c) || (expectedBound && expectedBound !== JSON.stringify(payload(c)))) return false;
     const t = posted.get(c) || {}; t[kind] = {bound:JSON.stringify(payload(c)), at:new Date().toISOString()}; posted.set(c, t); refresh(); return true; };
-  window.feedbackWorkspace = {cards, payload, valid, approvals, posted, draftBasis, basisNow, refresh, markPosted};
+  window.feedbackWorkspace = {cards, payload, valid, approvals, posted, draftBasis, basisNow, refresh, markPosted, tickMatches};
   setInterval(refresh,1000); select(1); refresh();
 })();

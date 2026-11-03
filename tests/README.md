@@ -58,7 +58,6 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 | `test_teams_students.py` | Complete roster status reads, privacy, jobs and assignment switching |
 | `test_teams_grading_spike.py` | Field labels exclude contents/values, masking and read-only inspection |
 | `test_myschool_pilot.py` | One-student single/multiple-criterion preview, authorization, Save and read-back |
-| `test_myschool_batch.py` | Posting choices, selected students, criterion levels and full previews, changed publication/identity on refresh, uncertain outcomes, stop, input locking and completion identity (mocked jobs only) |
 | `test_teams_post.py` | One-student preview, destination identity, explicit Return, single-use previews and read-back |
 | `test_forms_import.py` | Local Forms export parsing, metadata exclusion, limits, notices and upload UI |
 | `test_draft_quality.py` | Draft benchmark counts and audits with scripted replies |
