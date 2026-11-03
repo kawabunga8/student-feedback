@@ -83,7 +83,7 @@
   const table=el('div');table.className='teams-bulk-rows';dlg.append(table);
   const refresh=el('button','Reload reviewed students');refresh.type='button';dlg.append(refresh);
   const previewAll=el('button','Read Teams for all');previewAll.type='button';previewAll.disabled=true;dlg.append(previewAll);
-  const redo=el('input');redo.type='checkbox';const redoLabel=el('label');redoLabel.append(redo,document.createTextNode(' Also redo students already posted or Returned in Teams'));redoLabel.style.display='block';dlg.append(redoLabel);
+  const redo={checked:false};   // students already Returned are skipped: the app posts from the 'To return' list only
   const confirm=el('input');confirm.type='checkbox';const confirmText=el('span');const confirmLabel=el('label');confirmLabel.append(confirm,confirmText);dlg.append(confirmLabel);
   const save=el('button','Post feedback and Return for all previewed students');save.type='button';save.disabled=true;dlg.append(save);
   const stop=el('button','Stop after current student');stop.type='button';stop.disabled=true;dlg.append(stop);
@@ -95,13 +95,13 @@
   // Already posted by this app (and unchanged), or Returned according to the last Teams status read.
   function alreadyDone(sid){const ws=window.feedbackWorkspace;const c=ws?.cards().find(x=>ws.payload(x).student_id===sid);if(!c)return '';
     const t=(ws.posted.get(c)||{}).teams;if(t&&t.bound===JSON.stringify(ws.payload(c)))return 'posted';return c.dataset.tstatus==='Returned'?'Returned in Teams':'';}
-  redo.onchange=()=>{rows.forEach(r=>{if(r.state==='skipped')r.state='';});confirm.checked=false;draw();};
+
   function draw(){
     table.replaceChildren();
     rows.forEach(r=>{
       const line=el('div');line.style.margin='6px 0';
       r.nameInput.disabled=busy||r.state==='posted';
-      const status=el('span',r.state==='skipped'?'already '+r.already+': skipped (tick “Also redo…” to include)':r.state==='posted'?'✓ posted and Returned (verified)':r.state==='previewed'?'ready: Teams found “'+r.preview.target_name+'”'+(r.preview.existing?' · existing feedback will be replaced':''):r.error?'⚠ '+r.error:r.state==='working'?'working…':'not read yet');
+      const status=el('span',r.state==='skipped'?'already '+r.already+': skipped (change it in Teams if needed)':r.state==='posted'?'✓ posted and Returned (verified)':r.state==='previewed'?'ready: Teams found “'+r.preview.target_name+'”'+(r.preview.existing?' · existing feedback will be replaced':''):r.error?'⚠ '+r.error:r.state==='working'?'working…':'not read yet');
       line.append(el('strong',r.name+'  '),r.nameInput,el('br'),status);table.append(line);
     });
     const n=ready().length;
@@ -133,21 +133,42 @@
       draw();
     }catch(e){if(owner===aid()&&token===generation)message.textContent=e.message;}
   }
+  async function readStatuses(owner,token){
+    try{const rec=(await(await fetch('/api/assignments/'+owner)).json()).assignment,t=(rec&&rec.teams)||{};if(!t.className||!t.title)return null;
+      const d=await post({type:'teams_students',assignment:owner,class:t.className,title:t.title});if(d.error)return null;
+      for(let i=0;i<300;i++){
+        if(token!==generation||owner!==aid())return null;
+        const j=(await(await fetch('/api/jobs/'+d.job.id)).json()).job;if(!j)return null;
+        if(['queued','running','waiting_for_sign_in'].includes(j.state)){message.textContent='Reading who is already Returned in Teams… Chrome opens for this; sign in there if asked.';await pause();continue;}
+        const res=(j.drafts||[]).find(x=>x.teams_students)?.teams_students;if(!res)return null;
+        try{await fetch('/api/jobs/'+d.job.id+'/delivered',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:['students']})});}catch(e){}
+        if(typeof TEAMS!=='undefined'&&typeof applyTeams==='function'){TEAMS={assignment_id:owner,title:res.title,assignment:res.title,due:res.due||'',students:res.students};applyTeams();}   // the table shows Returned too
+        return res.students;
+      }
+    }catch(e){}
+    return null;
+  }
   async function readAll(){
     if(busy)return;const owner=aid(),token=++generation;busy=true;halt=false;confirm.checked=false;draw();
     try{await flush();
+      const roster=await readStatuses(owner,token);       // null if it can't be read: then every student is checked one by one, as before
+      if(roster){const by=new Map(roster.map(x=>[x.name.trim().toLowerCase(),x.status]));
+        rows.forEach(r=>{if(r.state==='posted')return;const st=by.get(r.nameInput.value.trim().toLowerCase());
+          if(st===undefined)r.rosterMissing=true;else{r.rosterMissing=false;r.already=st==='Returned'?'Returned in Teams':(r.already==='posted'?'posted':'');}});}
       for(const r of rows){
         if(halt||owner!==aid()||token!==generation)break;if(r.state==='posted')continue;
+        if(r.rosterMissing){r.state='';r.error='Not on the Teams roster under “'+r.nameInput.value.trim()+'”. Type the name exactly as Teams shows it.';draw();continue;}
         if(r.already&&!redo.checked){r.state='skipped';r.error='';draw();continue;}
         if(!r.nameInput.value.trim()){r.error='Type the name exactly as Teams shows it.';draw();continue;}
         r.state='working';r.error='';r.preview=null;draw();
         try{if(!current(r.id))throw Error('No longer reviewed. Review and save again.');
           const d=await post(inspectBody(owner,r));if(d.error)throw Error(d.error);
           r.preview={...await follow(d.job,owner,token),jobId:d.job.id,at:Date.now()};r.state='previewed';
-        }catch(e){r.state='';r.error=e.message;}
+        }catch(e){if(/already Returned/i.test(e.message)){r.state='skipped';r.already='Returned in Teams';r.error='';}else{r.state='';r.error=e.message;}}
         draw();
       }
-      message.textContent=ready().length+' of '+rows.length+' read (nothing changed in Teams). Students with a ⚠ will not be posted. Previews expire after 10 minutes.';
+      const skipped=rows.filter(r=>r.state==='skipped').length,warn=rows.filter(r=>r.error).length;
+      message.textContent=ready().length+' ready to post'+(skipped?' · '+skipped+' already Returned (skipped)':'')+(warn?' · '+warn+' need attention (⚠, not posted)':'')+'. Nothing was changed in Teams. Previews expire after 10 minutes.';
     }catch(e){message.textContent=e.message;}
     finally{busy=false;draw();}
   }
