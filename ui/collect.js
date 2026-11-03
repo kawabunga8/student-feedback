@@ -29,7 +29,15 @@
   const foot = make('div', 'teams-actions');
   const close = make('button', 'collect-close', 'Close'); close.type = 'button'; close.onclick = () => dlg.close();
   foot.append(close);
-  dlg.append(urlIn, bar, act, prev, foot);
+  // ---- whole class: tries likely page titles for every student of the loaded class (read-only, one Chrome session)
+  const clsBox = make('div', 'collect-class');
+  clsBox.append(make('p', 'status', 'Or collect the whole class: paste any one address from the class notebook and the app opens each student\u2019s page of this assignment by its likely title. Students whose page isn\u2019t found are listed, not guessed. This takes a few minutes (about 6 s per title tried).'));
+  const nbIn = make('input', 'collect-notebook'); nbIn.placeholder = 'Any page address from the class notebook (https://\u2026.sharepoint.com/\u2026/Doc.aspx?sourcedoc=\u2026)'; nbIn.setAttribute('aria-label', 'Class notebook address');
+  try { nbIn.value = localStorage.getItem('collect-notebook') || ''; } catch(e) { /* not remembered */ }
+  const ttIn = make('textarea', 'collect-titles'); ttIn.rows = 3; ttIn.placeholder = 'Page titles to try, one per line (leave empty: made from the assignment title, e.g. \u201cStage 3 - Prototype & Test\u201d)'; ttIn.setAttribute('aria-label', 'Page titles to try');
+  const clsBtn = make('button', 'primary collect-class-read', 'Collect whole class'); clsBtn.type = 'button';
+  clsBox.append(nbIn, ttIn, clsBtn);
+  dlg.append(urlIn, bar, clsBox, act, prev, foot);
   document.body.append(dlg);
 
   let generation = 0;
@@ -96,7 +104,7 @@
     current = {jobId: id, batch: true, assignment}; prev.replaceChildren(); prev.hidden = false; act.replaceChildren();
     const doneBefore = (j.items || []).filter(i => i.state === 'done' && i.delivered).length;
     prev.append(make('p', 'status', `${got.length} page${got.length === 1 ? '' : 's'} read and waiting` + (doneBefore ? `, ${doneBefore} already added` : '') + (failed.length ? `, ${failed.length} could not be read` : '') + '. Tick the pages to add; each name must match the class list.'));
-    failed.forEach(f => prev.append(make('p', 'status collect-failed', 'Page ' + pageNo(f.key) + ' was not collected: ' + f.error)));
+    failed.forEach(f => prev.append(make('p', 'status collect-failed', /^s\d+$/.test(f.key) ? f.error : 'Page ' + pageNo(f.key) + ' was not collected: ' + f.error)));
     const rows = got.map(d => {
       const res = d.collect, src = res.source || {}, pg = res.page || {};
       const r = make('div', 'teams-row collect-row');
@@ -189,6 +197,26 @@
     follow(d.job.id, aid);
   };
 
+  clsBtn.onclick = async () => {
+    if(busy) return;
+    const aid = asgId();
+    if(!aid) { msg.textContent = 'Open or save an assignment first: collected work is kept with the assignment.'; return; }
+    if(!rosterLoaded()) { msg.textContent = 'Load the Course Hub class list first: it gives the student names.'; return; }
+    const base = nbIn.value.trim();
+    if(!base) { msg.textContent = 'Paste an address from the class notebook first.'; nbIn.focus(); return; }
+    const students = ROSTER.map(r => ({name: (r.first + ' ' + r.last).trim()})).filter(x => x.name);
+    const titles = ttIn.value.split(/\n+/).map(x => x.trim()).filter(Boolean);
+    try { localStorage.setItem('collect-notebook', base); } catch(e) { /* not remembered */ }
+    const token = ++generation;
+    msg.textContent = 'Starting\u2026'; prev.hidden = true; busy = true; readBtn.disabled = true; clsBtn.disabled = true;
+    const asg = ($('#asg-pick').selectedOptions[0] || {}).textContent || '';
+    let d; try { d = await postJSON('/api/jobs', {type: 'onenote_class', assignment: aid, base, titles, students, assignment_title: (typeof window.assignmentTitle === 'function' ? window.assignmentTitle() : asg)}); } catch(e) { d = {error: 'Couldn\u2019t reach the app.'}; }
+    clsBtn.disabled = false;
+    if(token !== generation || asgId() !== aid) return;
+    if(d.error) { msg.textContent = d.error; return stop(); }
+    follow(d.job.id, aid);
+  };
+
   function resetPreview() {
     generation++; current = null; stop();
     prev.replaceChildren(); prev.hidden = true; act.replaceChildren();
@@ -201,7 +229,7 @@
     const aid = asgId(); if(!aid || busy) return;
     try {                                       // pick up a read that finished (or is still running) while this was closed
       const list = (await (await fetch('/api/jobs?assignment=' + aid)).json()).jobs || [];
-      const j = list.find(x => x.type === 'onenote_read' && (['queued', 'running', 'waiting_for_sign_in'].includes(x.state) || (x.items || []).some(i => i.state === 'done' && !i.delivered)));
+      const j = list.find(x => ['onenote_read', 'onenote_class'].includes(x.type) && (['queued', 'running', 'waiting_for_sign_in'].includes(x.state) || (x.items || []).some(i => i.state === 'done' && !i.delivered)));
       if(asgId() === aid && j && !current) follow(j.id, aid);
     } catch(e) { /* nothing to pick up */ }
   };

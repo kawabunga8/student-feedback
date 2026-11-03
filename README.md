@@ -15,7 +15,7 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Create an unpublished MySchool assignment from Design: load courses, choose course/type/due date and learning outcomes, review, then explicitly Save. Publish stays No and student email stays off.
 - Create an unpublished ordinary assignment in Teams from Design: review the class/title/instructions, confirm, then check the verified Drafts receipt. Publishing, attachments and Forms quiz creation are separate and not automated.
 - Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
-- Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
+- Collect typed OneNote pages from pasted addresses, or the whole class at once from one notebook address (it tries the likely page titles for each student and lists those it can't find), or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
 - Load an Assessment folder (`Assessment/<year>/<quarter>/<course>/<assignment>`) and the app sets itself up: it picks the course and quarter and the class list from Course Hub, finds the matching assignment in that course's confirmed Teams class (read-only), imports its name and instructions, saves the assignment, and loads any `<name>.feedback.md` drafts beside each student's work as editable cards.
 - Draft locally in the foreground or background, or load drafts made by `feedback.py` (below). Class overview shows the next action for each student, including per-destination progress (posted to Teams, saved to MySchool).
 - Review: **Mark all reviewed** / **Unreview all**, or each student's own toggle. A level is optional (feedback only) for Teams; MySchool needs one. A student's MySchool comment defaults to their feedback and stays editable.
@@ -142,7 +142,7 @@ If Course Hub is unreachable the page says so and falls back to:
 ## Files
 - `app.py` - web UI + server. `feedback.py` - prompt, model call (Ollama or LM Studio), CLI.
 - `jobs.py` - background job queue (drafting, Teams/OneNote reads, posting jobs). `ui/` - the workspace's scripts and styles; see `ui/README.md`.
-- `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader.
+- `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader. `onenote_class.py` - the whole-class version: one Chrome session, tries likely page titles per student and accepts a page only when its title matches.
 - `forms_import.py` - Microsoft Forms response-export parser (local file, no network). `vision_read.py` - local vision-model image transcription.
 - `teams_batch.py`, `myschool_batch.py` - the one-session posting engines for Teams and MySchool (read, preview, post/save, verify; one student or a whole class). `teams_post.py`, `myschool_post.py` - the earlier one-student workers; the engines reuse their page helpers and safeguards.
 - `stage_submissions.py` - stages collected files into the Assessment folder. `check_session_folder.py` - checks macOS lets the app save there.
