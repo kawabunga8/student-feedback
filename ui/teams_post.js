@@ -174,7 +174,10 @@
     message.textContent=(done.length?'Posted and Returned (verified): '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done. Record each student’s Teams completion tick after checking.');
   }
   refresh.onclick=load;previewAll.onclick=readAll;save.onclick=postAll;stop.onclick=()=>{halt=true;message.textContent='Stopping after the current student…';};
-  launch.onclick=()=>{dlg.showModal();load();};
+  // One entry point for the whole class: open, load the reviewed students and read Teams for all of them at once (read-only).
+  // All that is left is the one confirmation before anything is posted.
+  async function openAndRead(){dlg.showModal();await load();if(rows.length&&!busy)readAll();}
+  launch.onclick=openAndRead;window.postToAll=openAndRead;
   $('#asg-pick')?.addEventListener('change',()=>{generation++;busy=false;halt=true;rows=[];draw();message.textContent='Assignment changed. Reopen this dialog.';});
   draw();
 })();

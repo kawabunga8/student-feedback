@@ -922,7 +922,9 @@ def teams_destination(rec):
     return {'class':t['className'], 'title':t['title'], 'source':{k:source[k] for k in ('class_id','assignment_id')}}
 
 
-TEAMS_POST_RUNNER = lambda req, authorize: browser_pilot_runner(req, authorize, 'teams_post.py', teams_post.PilotError, 'Teams')
+# After the authorization the Teams step types the feedback, clicks Return and then reopens the roster to read it back. That
+# takes longer than the MySchool step (the first real post ran about 55 s), so it gets more time before the child is killed.
+TEAMS_POST_RUNNER = lambda req, authorize: browser_pilot_runner(req, authorize, 'teams_post.py', teams_post.PilotError, 'Teams', write_timeout=150)
 
 
 def _run_teams_post_job(queue, job):

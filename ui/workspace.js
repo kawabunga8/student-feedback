@@ -29,6 +29,7 @@
   const pause = make('button', '', 'Stop after current student'); pause.disabled = true; toolbar.append(pause);
   const markAll = make('button', '', 'Mark all reviewed'); markAll.type = 'button'; toolbar.append(markAll);
   const unmarkAll = make('button', '', 'Unreview all'); unmarkAll.type = 'button'; toolbar.append(unmarkAll);
+  const postAll = make('button', 'primary', 'Post to all'); postAll.type = 'button'; toolbar.append(postAll);   // opens the Teams bulk dialog and reads Teams for every reviewed student
   const search = make('input', 'student-search'); search.placeholder = 'Find a student…'; search.setAttribute('aria-label','Find a student'); toolbar.append(search);
   review.append(document.getElementById('students'));
   const skip = document.getElementById('skipret').closest('label'); review.insertBefore(skip, document.getElementById('students'));
@@ -206,7 +207,7 @@
     const text = `${loaded} submissions loaded   /   ${drafted} drafts   /   ${reviewed} reviewed`;
     if(summary.textContent !== text) summary.textContent = text;
     save.disabled = !reviewed;
-    const toReview = all.filter(reviewable).length; markAll.textContent = toReview ? 'Mark all ' + toReview + ' reviewed' : 'Mark all reviewed'; markAll.disabled = !toReview; unmarkAll.disabled = !reviewed;
+    const toReview = all.filter(reviewable).length; markAll.textContent = toReview ? 'Mark all ' + toReview + ' reviewed' : 'Mark all reviewed'; markAll.disabled = !toReview; unmarkAll.disabled = !reviewed; postAll.disabled = !reviewed;
     pause.disabled = !document.getElementById('go').disabled;
     renderPosting();
   }
@@ -219,6 +220,7 @@
     const at = new Date().toISOString(); todo.forEach(c => approvals.set(c, {bound:JSON.stringify(payload(c)), reviewed_at:at})); refresh();
   };
   unmarkAll.onclick = () => { cards().forEach(c => approvals.delete(c)); refresh(); };
+  postAll.onclick = () => { if(window.postToAll) window.postToAll(); };
   search.oninput = refresh;
   main.addEventListener('input',refresh); main.addEventListener('change',() => setTimeout(refresh,0));
   save.onclick = async () => {
