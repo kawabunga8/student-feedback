@@ -326,6 +326,7 @@ def _host(url):
 class Session:
     def __init__(self, page, wait):
         self.page, self.wait, self.log = page, wait, []
+        self.t0 = time.time()         # callers that time a whole run reset it; note() needs it either way
         self.rubric_wait = 15          # seconds to wait for the rubric dialog after the one click
 
     def note(self, s):
