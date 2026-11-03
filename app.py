@@ -1703,7 +1703,7 @@ function applyCourse(save=true){
       renderCourses($("#course").value);
     }
   }
-  loadRoster();
+  window.rosterReady = loadRoster();                // awaited by the Assessment-folder loader
   if(save) store.set("course", c ? c.name : "");
   if(!c){ $("#coursenote").textContent = ""; showStds(); return; }
   // Never carry the previous course's department (and its ticked standards) over: use this course's own
@@ -1833,6 +1833,14 @@ $("#assess").onchange = async e => {
   try { d = await (await fetch("/api/load", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({path})})).json(); }
   catch(err){ return showErr("Couldn't reach the app to read " + path + "."); }
   if(d.error) return showErr(d.error);
+  // Assessment/<year>/<quarter>/<course>/<assignment>: pick that course (and quarter) from the Course Hub list and load its class list
+  const parts = path.split("/"), qd = parts.find(x => /^Q\d$/.test(x)), cd = qd ? parts[parts.indexOf(qd) + 1] : "";
+  const ci = COURSES.findIndex(c => c.name === cd || courseLabel(c) === cd);
+  if(ci >= 0 && String(ci) !== $("#course").value){
+    if([...$("#quarter").options].some(o => o.value === qd)) $("#quarter").value = qd;
+    renderCourses(String(ci)); $("#course").value = String(ci); applyCourse(true);
+    try { await window.rosterReady; } catch(e){}
+  }
   const have = new Set([...document.querySelectorAll(".student")].map(c => c.querySelector(".name").value.trim() + "\n" + c.querySelector(".work").value.trim()));
   const fresh = d.students.filter(s => !have.has(s.name + "\n" + s.work));   // loading the same folder twice adds nothing
   const first = document.querySelector(".student");
