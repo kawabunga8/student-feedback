@@ -336,7 +336,9 @@
     if(d.error) { tmsg.textContent = d.error; return stopWait(); }
     return follow(d.job.id, onDone);
   }
-  tb.onclick = () => startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length; renderTeamsList();
+  tb.onclick = () => startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length;
+    if(design.teamsClass && tItems.some(x => x.class_name === design.teamsClass)) tfilter.value = design.teamsClass;   // show this course's class first
+    renderTeamsList();
     tmsg.textContent = tItems.length ? `Read ${tItems.length} assignments at ${when(res.read_at)}. Choose one to read.` : 'Teams showed no assignments.'; });
   tfilter.addEventListener('input', renderTeamsList);
   function renderTeamsList() {
@@ -534,7 +536,8 @@
   };
   function openTeams(field) {
     focusField = field || ''; changingMatch = false;
-    if(!clsIn.value.trim()) clsIn.value = (teams && teams.className) || design.teamsClass || '';
+    if(design.teamsClass && !paste.value.trim()) clsIn.value = design.teamsClass;      // the class confirmed for this course in Course Hub wins over an old link
+    else if(!clsIn.value.trim()) clsIn.value = (teams && teams.className) || design.teamsClass || '';
     renderClassList();
     if(paste.value.trim()) read(); else { parsed = null; msg.textContent = ''; render(); }
     dlg.showModal();
