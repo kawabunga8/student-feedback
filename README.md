@@ -17,10 +17,20 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
 - Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
 - Draft locally in the foreground or background. Class overview shows the next action for each student.
-- Preview one approved student's Teams or MySchool destination, then explicitly confirm posting. Live posting is not yet verified; bulk posting remains disabled.
+- Preview an approved student's Teams or MySchool destination, then explicitly confirm posting. MySchool offers **one student** or **batch** in Export & posting. Batch posting uses the same per-student approval and read-back checks; live MySchool saving remains unverified.
 - Image transcription is an experimental local-vision prototype. Check every line yourself. Open a saved assignment first: each image preview is bound to it, and switching assignments discards the preview instead of adding it to the wrong class.
 
 See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
+
+## Posting reviewed assessments to MySchool
+
+In **Export & posting**, choose **MySchool: one student** or **MySchool: batch**. Save the assignment/session and review the levels and separate MySchool comments first.
+
+For a batch, enter the MySchool assignment address, exact title and course. Select the students to include; unchanged assessments already marked saved start unchecked. Check each student's MySchool name and enter one level per criterion when the assignment has several criteria (`PRF, EXT+`, for example). Leaving levels empty uses the student's reviewed level only for a single-criterion assessment.
+
+Click **Read MySchool and preview all**, expand each full preview, and check the destination, existing and proposed levels/comments, status, and publication warning. Confirm once, then save the previewed students. Keep the dialog open: it processes students sequentially, marks verified saves, and stops at the first problem. **Stop after current student** lets the current operation finish.
+
+An expired preview is refreshed before saving. Changes to identity, publication or assessment values stop the batch and require another preview and confirmation. An uncertain Save is shown separately from students not attempted; check MySchool before reloading or retrying it. Publication is never changed by posting, but an already published assignment may expose saved results immediately.
 
 ## Tests and model quality
 
@@ -119,7 +129,7 @@ If Course Hub is unreachable the page says so and falls back to:
 - `jobs.py` - background job queue (drafting, Teams/OneNote reads, posting jobs). `ui/` - the workspace's scripts and styles; see `ui/README.md`.
 - `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader.
 - `forms_import.py` - Microsoft Forms response-export parser (local file, no network). `vision_read.py` - local vision-model image transcription.
-- `teams_post.py`, `myschool_post.py` - explicit one-student posting pilots (preview, confirmation, read-back). Bulk posting stays off.
+- `teams_post.py`, `myschool_post.py` - per-student posting workers (preview, confirmation, read-back); the UI uses these same workers for sequential batches.
 - `stage_submissions.py` - stages collected files into the Assessment folder. `check_session_folder.py` - checks macOS lets the app save there.
 - `tools/` - spikes, `draft_quality.py` and `transcribe_check.py` (real-model measurements). `tests/` - synthetic-data suites; see `tests/README.md`.
 - `standards/` - 2026-27 learning-standards PDFs (parsed on load).

@@ -812,6 +812,19 @@ def _run_myschool_job(queue, job):
         queue.item_finished(job, nxt["idx"], nxt["key"], "failed", error=safe[:300])
 
 
+def _run_myschool_read_job(queue, job):
+    req = queue.request_of(job)["request"]
+    nxt = queue.next_item(job["id"])
+    if not nxt:
+        return
+    try:
+        out = MYSCHOOL_RUNNER(req, contextlib.nullcontext)
+        queue.item_finished(job, nxt["idx"], nxt["key"], "done", result={"myschool": out})
+    except Exception as e:
+        safe = str(e) if isinstance(e, (myschool_post.PilotError, ValueError)) else "MySchool could not be read. Check the address and try again."
+        queue.item_finished(job, nxt["idx"], nxt["key"], "failed", error=safe[:300])
+
+
 def myschool_runner(req, authorize):
     return browser_pilot_runner(req, authorize, 'myschool_post.py', myschool_post.PilotError, 'MySchool')
 
@@ -864,6 +877,12 @@ def enqueue_myschool_job(body):
     rec = load_assignment_record(aid)
     rel, _ = session_folder(aid, rec)
     op = body.get("op")
+    if op == "read":     # just the address: read MySchool's own title and course for it (nothing is changed)
+        req = {"op": "read", "url": myschool_post.canonical_url(body.get("url", ""))}
+        with _save_lock:
+            if any(j["type"].startswith("myschool_") and j["state"] in ("queued", "running", "waiting_for_sign_in") for j in QUEUE.list_for(aid)):
+                raise ValueError("A MySchool job is already active for this assignment.")
+            return QUEUE.enqueue("myschool_read", aid, rel, req, [{"key": "myschool", "work_sha": ""}])
     if op not in ("inspect", "save"):
         raise ValueError("Choose preview or save.")
     if op == "inspect":
@@ -1292,7 +1311,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, "myschool_read": _run_myschool_read_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 

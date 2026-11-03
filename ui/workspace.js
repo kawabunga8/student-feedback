@@ -64,8 +64,9 @@
   const bPostTeams = make('button','primary','Post to all (Teams)'); bPostTeams.type = 'button'; bPostTeams.onclick = () => { if(window.postToAll) window.postToAll(); };
   const bCheck = make('button','','Check Teams'); bCheck.type = 'button'; bCheck.title = 'Read who is already Returned in Teams (read-only).';
   bCheck.onclick = () => { const b = document.getElementById('teams-status-read'); if(b) b.click(); else postSummary.textContent = 'Open or save an assignment first.'; };
-  const bPostMs = make('button','','Post to all (MySchool)'); bPostMs.type = 'button'; bPostMs.hidden = true; bPostMs.onclick = () => { if(window.postToAllMySchool) window.postToAllMySchool(); };
-  postActions.append(bPostTeams, bCheck, bPostMs);
+  const bPostMsOne = make('button','','MySchool: one student'); bPostMsOne.type = 'button'; bPostMsOne.onclick = () => window.postOneMySchool?.();
+  const bPostMs = make('button','','MySchool: batch'); bPostMs.type = 'button'; bPostMs.onclick = () => window.postToAllMySchool?.();
+  postActions.append(bPostTeams, bCheck, bPostMsOne, bPostMs);
   const postTable = make('table','posting-table'); posting.append(postTable);
   const manual = make('details','posting-manual'); manual.append(make('summary','','Do it by hand (copy and tick)')); posting.append(manual);
   const links = make('div','posting-links'); posting.append(links);
@@ -174,7 +175,7 @@
     const done = count(data, d => d.t[1] === 'good' || d.t[1] === 'soft'), ready = count(data, d => d.t[1] === 'ready'), waiting = count(data, d => d.t[1] === 'muted'), changed = count(data, d => d.t[1] === 'warn');
     postSummary.textContent = n ? 'Teams: ' + done + ' of ' + n + ' done · ' + ready + ' ready to post' + (waiting ? ' · ' + waiting + ' not reviewed' : '') + (changed ? ' · ' + changed + ' changed since posting' : '') +
       (showMs ? ' · MySchool: ' + count(data, d => d.m[1] === 'good') + ' of ' + n + ' saved' : '') : 'No students yet. Load an Assessment folder first.';
-    bPostTeams.disabled = !ready && !changed; bPostMs.hidden = !showMs;
+    bPostTeams.disabled = !ready && !changed; bPostMs.disabled = bPostMsOne.disabled = !showMs;
     const th = (t) => { const e = make('th','',t); e.scope = 'col'; return e; };
     const head = make('tr'); head.append(th('Student'), th('Level'), th('Teams')); if(showMs) head.append(th('MySchool')); head.append(th(''));
     const chip = ([t, k]) => { const td = make('td'); td.append(make('span','chip ' + k, t)); return td; };
@@ -293,7 +294,7 @@
   window.addEventListener('beforeunload',e=>{ if(cards().some(c=>c.querySelector('.work').value.trim())) { e.preventDefault(); e.returnValue=''; } });
   // Lets the session saver (assignment.js) read and restore this page's state.
   // A verified post records the same "done" tick the teacher would tick by hand: bound to the exact reviewed values.
-  const markPosted = (sid, kind) => { const c = cards().find(x => payload(x).student_id === sid); if(!c || !valid(c)) return false;
+  const markPosted = (sid, kind, expectedBound) => { const c = cards().find(x => payload(x).student_id === sid); if(!c || !valid(c) || (expectedBound && expectedBound !== JSON.stringify(payload(c)))) return false;
     const t = posted.get(c) || {}; t[kind] = {bound:JSON.stringify(payload(c)), at:new Date().toISOString()}; posted.set(c, t); refresh(); return true; };
   window.feedbackWorkspace = {cards, payload, valid, approvals, posted, draftBasis, basisNow, refresh, markPosted};
   setInterval(refresh,1000); select(1); refresh();

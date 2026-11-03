@@ -128,6 +128,9 @@ def open_assessment(page, request):
 
 def operate(page, request, authorize=contextlib.nullcontext):
     state = open_assessment(page, request)
+    if request['op'] == 'read':       # read-only: what MySchool itself calls this assignment, so the teacher need only give the address
+        return {'title': state.get('title', ''), 'course': state.get('course', ''), 'publication': state.get('publication', ''),
+                'student_names': [x.get('name', '') for x in state.get('students', [])], 'read_at': time.time()}
     student, value = target_of(state, request)
     desired = proposed(student, request, value)
     baseline = digest(state)
