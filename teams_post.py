@@ -114,7 +114,13 @@ def run(req, authorize=contextlib.nullcontext):
                 ctx.close()
     except PilotError:
         raise
-    except Exception:
+    except T.ReadError as e:
+        if req.get('op') == 'inspect':   # a preview changes nothing in Teams, so the reader's own fixed message is safe to show
+            raise PilotError(str(e)[:300]) from None
+        raise PilotError('Teams step stopped. Feedback may have autosaved or Return may have run. Check Teams before a fresh preview; no automatic retry was made.') from None
+    except Exception as e:
+        if req.get('op') == 'inspect':
+            raise PilotError('Teams preview stopped (' + type(e).__name__ + '); nothing was changed in Teams. Check that the saved Teams class and assignment are the ones for this course.') from None
         raise PilotError('Teams step stopped. Feedback may have autosaved or Return may have run. Check Teams before a fresh preview; no automatic retry was made.') from None
 
 
