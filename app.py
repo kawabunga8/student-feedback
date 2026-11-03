@@ -1061,19 +1061,29 @@ def list_assessments():
     return [x for _, x in sorted(found, key=lambda t: -t[0])]
 
 
+def _draft_text(raw):
+    """A feedback.py draft file -> just the feedback: drops its '# Feedback: <name>' heading and the footer."""
+    text = re.sub(r"^\s*#[^\n]*\n", "", raw.strip(), count=1)
+    return re.split(r"\n-{3,}\s*\n_Draft generated", text)[0].strip()
+
+
 def load_assessment(rel):
-    """One folder under Assessment -> [(name, work)], one per .txt/.md file; name = filename with _ as spaces."""
+    """One folder under Assessment -> [(name, work, feedback)], one per .txt/.md file; name = filename with _ as spaces.
+    A `<name>.feedback.md` file beside the work is that student's saved draft (feedback is "" without one); it is never
+    treated as student work. Files starting with _ (for example _MISSING_SUBMISSIONS.txt) are notes, not students."""
     root = ASSESSMENT.resolve()
     d = (root / rel).resolve()
     if not (d.is_dir() and (d == root or d.is_relative_to(root))):
         raise ValueError("not inside the Assessment folder")
     out = []
     for f in sorted(d.iterdir()):
-        if f.name.startswith(".") or f.suffix.lower() not in {".txt", ".md"}:
+        if f.name.startswith((".", "_")) or f.suffix.lower() not in {".txt", ".md"} or f.name.lower().endswith(".feedback.md"):
             continue
         work = f.read_text(encoding="utf-8-sig", errors="replace").strip()
         if work:
-            out.append((SECTION_SUFFIX.sub("", f.stem).replace("_", " "), work))
+            side = f.with_name(f.stem + ".feedback.md")
+            fb = _draft_text(side.read_text(encoding="utf-8-sig", errors="replace")) if side.is_file() else ""
+            out.append((SECTION_SUFFIX.sub("", f.stem).replace("_", " "), work, fb))
     return out
 
 
@@ -1679,10 +1689,12 @@ $("#assess").onchange = async e => {
   const fresh = d.students.filter(s => !have.has(s.name + "\n" + s.work));   // loading the same folder twice adds nothing
   const first = document.querySelector(".student");
   if(fresh.length && first && !first.querySelector(".work").value.trim() && !first.querySelector(".name").value.trim()) first.remove();
-  fresh.forEach(s => addStudent(s.name, s.work));
+  let drafts = 0;
+  fresh.forEach(s => { const c = addStudent(s.name, s.work); if(s.feedback && window.insertDraft){ window.insertDraft(c, s.feedback); drafts++; } });   // saved drafts become editable cards
   const dup = d.students.length - fresh.length, again = dup ? " (" + dup + " already on the page, skipped)" : "";
   if(fresh.length && ROSTER.length) matchAll(true);   // its class-list summary is the more useful status
   else $("#status").textContent = fresh.length + " student" + (fresh.length===1?"":"s") + " loaded from " + path + again + "." +
+    (drafts ? " " + drafts + " saved draft" + (drafts===1?"":"s") + " loaded: read and edit each, then review before posting." : "") +
     (fresh.length ? " Choose a course to match them to the class list, then check the work and click Generate." : "");
   if(fresh.length && ROSTER.length && dup) $("#status").textContent += again;
   applyTeams();
@@ -1901,7 +1913,7 @@ class Handler(BaseHTTPRequestHandler):
                 rows = load_assessment(json.loads(self.rfile.read(n))["path"])
                 if not rows:
                     return self._send(200, {"error": "No student work found in that folder."})
-                return self._send(200, {"students": [{"name": a, "work": b} for a, b in rows]})
+                return self._send(200, {"students": [{"name": a, "work": b, "feedback": c} for a, b, c in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
         if self.path in ("/api/assignments", "/api/class-map", "/api/session") or self.path.startswith("/api/jobs"):

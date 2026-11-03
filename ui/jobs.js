@@ -48,6 +48,8 @@
     if(ws() && ws().draftBasis) ws().draftBasis.set(out, basis || ws().basisNow());
   }
 
+  window.insertDraft = insertDraft;                    // the Assessment-folder loader puts saved drafts on cards with this
+
   async function queue() {
     const aid = asgId();
     if(!aid) { say('Save the assignment first (Save in the assignment bar) so the app can keep the job with it.'); return; }
