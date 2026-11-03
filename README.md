@@ -12,6 +12,8 @@ python3 feedback.py submissions/ --rubric rubric.txt --grade 10   # command line
 
 The app follows Design → Setup → Collect → Draft & review → Export & posting. Save the assignment and session before closing. Only you choose levels and approve feedback; later edits require review again.
 
+- Create an unpublished MySchool assignment from Design: load courses, choose course/type/due date and learning outcomes, review, then explicitly Save. Publish stays No and student email stays off.
+- Create an unpublished ordinary assignment in Teams from Design: review the class/title/instructions, confirm, then check the verified Drafts receipt. Publishing, attachments and Forms quiz creation are separate and not automated.
 - Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
 - Collect typed OneNote pages from pasted addresses, or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
 - Draft locally in the foreground or background. Class overview shows the next action for each student.

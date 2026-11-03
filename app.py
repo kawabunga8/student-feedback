@@ -26,7 +26,9 @@ import feedback as fb
 import hashlib
 import sys
 import myschool_post
+import myschool_create
 import teams_post
+import teams_create
 import vision_read    # handwriting / pictures: a local vision model reads one image, text only
 import forms_import    # Microsoft Forms response exports (read-only, local file)
 import contextlib
@@ -814,7 +816,7 @@ def myschool_runner(req, authorize):
     return browser_pilot_runner(req, authorize, 'myschool_post.py', myschool_post.PilotError, 'MySchool')
 
 
-def browser_pilot_runner(req, authorize, script, error_type, label):
+def browser_pilot_runner(req, authorize, script, error_type, label, write_timeout=40):
     """Use the tools Python. The child asks permission immediately before edits/Save;
     the parent holds the approval lock until read-back finishes. No page data is logged."""
     if os.environ.get("SF_FORBID_BROWSER"):
@@ -835,7 +837,7 @@ def browser_pilot_runner(req, authorize, script, error_type, label):
                 if gate is not None:
                     raise error_type("Repeated posting authorization refused.")
                 candidate = authorize(); candidate.__enter__(); gate = candidate
-                timer.cancel(); timer = threading.Timer(40, proc.kill); timer.daemon = True; timer.start()
+                timer.cancel(); timer = threading.Timer(write_timeout, proc.kill); timer.daemon = True; timer.start()
                 proc.stdin.write("allow\n"); proc.stdin.flush()
             elif "ok" in msg:
                 if not msg["ok"]:
@@ -990,6 +992,152 @@ def enqueue_teams_post_job(body):
         return QUEUE.enqueue('teams_post_' + op, aid, rel, req, [{'key':'teams_post','work_sha':''}])
 
 
+TEAMS_CREATE_RUNNER = lambda req, authorize: browser_pilot_runner(req, authorize, 'teams_create.py', teams_create.DraftError, 'Teams draft')
+
+
+def enqueue_teams_create_job(body):
+    if QUEUE is None:
+        raise ValueError('The job worker is not running.')
+    aid = str(body.get('assignment', ''))
+    with _save_lock:
+        rec = load_assignment_record(aid)
+        if body.get('confirm') is not True or body.get('version') != rec.get('version'):
+            raise ValueError('Review the current saved assignment and confirm draft creation first.')
+        if ((rec.get('teams') or {}).get('source') or {}).get('assignment_id'):
+            raise ValueError('This record already refers to a Teams assignment. Start a new assignment to create a new draft.')
+        req = teams_create.payload(rec)
+        recovery = str(body.get('recovery_url') or '').strip()
+        if recovery:
+            teams_create.editor_id(recovery)
+            req['recovery_url'] = recovery.split('?')[0].split('#')[0]
+        req['version'] = rec['version']
+        claims_path = APP_DATA / 'teams-draft-claims.json'
+        claims = _read_json(claims_path, {})
+        if aid in claims:
+            previous = QUEUE.get(claims[aid])
+            failed = previous['state'] in ('failed', 'cancelled', 'interrupted') or any(i['state'] == 'failed' for i in previous.get('items', []))
+            if not recovery or not failed or previous['state'] in ('running','queued'):
+                raise ValueError('Draft creation was already requested. Check Teams Drafts; to recover a failed attempt, paste its existing empty draft URL rather than create a duplicate.')
+        rel, _ = session_folder(aid, rec)
+        job = QUEUE.enqueue('teams_create', aid, rel, req, [{'key':'teams_create', 'work_sha':''}])
+        claims[aid] = job['id']; _atomic_write_json(claims_path, claims)
+        return job
+
+
+def _run_teams_create_job(queue, job):
+    authorized = [False]
+    req = queue.request_of(job)['request']; nxt = queue.next_item(job['id'])
+    if not nxt:
+        return
+    @contextlib.contextmanager
+    def authorize():
+        with _save_lock:
+            rec = load_assignment_record(job['assignment'])
+            if (queue.cancel_requested(job['id']) or rec['version'] != req['version'] or
+                    teams_create.payload(rec) != {k:req[k] for k in ('class', 'title', 'instructions')}):
+                raise teams_create.DraftError('Saved assignment changed or creation was cancelled. No editor was requested.')
+            authorized[0] = True
+            yield
+    try:
+        out = TEAMS_CREATE_RUNNER(req, authorize)
+        if out.get('verified') is not True or out.get('unpublished') is not True:
+            raise teams_create.DraftError('No verified unpublished draft was returned. Check Teams Drafts.')
+        queue.item_finished(job, nxt['idx'], nxt['key'], 'done', result={'teams_create':out})
+    except Exception as e:
+        if not authorized[0]:
+            with _save_lock:
+                path = APP_DATA / 'teams-draft-claims.json'; claims = _read_json(path, {})
+                if claims.get(job['assignment']) == job['id']:
+                    del claims[job['assignment']]; _atomic_write_json(path, claims)
+        message = str(e) if isinstance(e, (ValueError, teams_create.DraftError)) else 'Draft creation stopped. Check Teams Drafts before retrying.'
+        queue.item_finished(job, nxt['idx'], nxt['key'], 'failed', error=message[:300])
+
+
+MYSCHOOL_CREATE_RUNNER = lambda req, authorize: browser_pilot_runner(req, authorize, 'myschool_create.py', myschool_post.PilotError, 'MySchool assignment', write_timeout=120)
+
+
+def enqueue_myschool_create_job(body):
+    if QUEUE is None:
+        raise ValueError('The job worker is not running.')
+    aid = str(body.get('assignment', ''))
+    with _save_lock:
+        rec = load_assignment_record(aid); op = body.get('op')
+        req = dict(myschool_create.payload(rec), op=op, version=rec['version'])
+        if body.get('version') != rec['version']:
+            raise ValueError('The saved assignment changed. Review a fresh preview.')
+        rel, _ = session_folder(aid, rec)
+        if op == 'list':
+            pass
+        elif op == 'inspect':
+            req.update(course=body.get('course'), kind=body.get('kind'), due=body.get('due'))
+            myschool_create.validate_choices(req)
+        elif op == 'verify':
+            previous=QUEUE.get(str(body.get('previous_id','')))
+            if previous['assignment']!=aid or previous['type']!='myschool_create_save' or previous['state'] in ('queued','running'):
+                raise ValueError('Choose a finished Save attempt for this assignment.')
+            prior=QUEUE.request_of(previous)['request']
+            if prior['version']!=rec['version'] or any(prior[k]!=req[k] for k in ('title','instructions')):
+                raise ValueError('Saved content changed. Check the existing MySchool assignment manually.')
+            req={**prior,'op':'verify'}
+        elif op == 'save':
+            if body.get('confirm') is not True:
+                raise ValueError('Confirm saving an unpublished assignment first.')
+            preview_job = QUEUE.get(str(body.get('preview_id','')), with_results=True)
+            if preview_job['assignment'] != aid or preview_job['type'] != 'myschool_create_inspect' or preview_job['state'] != 'completed':
+                raise ValueError('Use a completed preview for this assignment.')
+            prev = next((d['myschool_create'] for d in preview_job.get('drafts',[]) if 'myschool_create' in d),None)
+            saved_request = QUEUE.request_of(preview_job)['request']
+            if (not prev or time.time()-prev['read_at']>600 or saved_request['version']!=rec['version'] or
+                any(saved_request[k]!=req[k] for k in ('title','instructions'))):
+                raise ValueError('The preview expired or the assignment changed. Read a fresh preview.')
+            req.update({k:saved_request[k] for k in ('course','kind','due')})
+            outcomes=body.get('outcomes')
+            if not isinstance(outcomes,list) or not outcomes or len(outcomes)>12 or not all(isinstance(x,str) for x in outcomes) or len(set(outcomes))!=len(outcomes) or any(x not in prev['available_outcomes'] for x in outcomes):
+                raise ValueError('Choose one or more available learning outcomes, without duplicates.')
+            req.update(preview=prev,outcomes=outcomes)
+            path=APP_DATA/'myschool-assignment-claims.json';claims=_read_json(path,{})
+            claim=aid+':'+prev['course_id']
+            if claim in claims:
+                raise ValueError('Save was already requested for this course. Check MySchool and the previous receipt before any retry.')
+        else:
+            raise ValueError('Choose list, preview or save.')
+        if any(j['type'].startswith('myschool_create_') and j['state'] in ('queued','running') for j in QUEUE.list_for(aid)):
+            raise ValueError('A MySchool assignment job is already active.')
+        job=QUEUE.enqueue('myschool_create_'+op,aid,rel,req,[{'key':'myschool_create','work_sha':''}])
+        if op=='save':
+            claims[claim]=job['id'];_atomic_write_json(path,claims)
+        return job
+
+
+def _run_myschool_create_job(queue,job):
+    authorized=[False]
+    req=queue.request_of(job)['request'];nxt=queue.next_item(job['id'])
+    if not nxt:return
+    @contextlib.contextmanager
+    def authorize():
+        with _save_lock:
+            rec=load_assignment_record(job['assignment'])
+            if (queue.cancel_requested(job['id']) or rec['version']!=req['version'] or
+                myschool_create.payload(rec)!={k:req[k] for k in ('title','instructions')}):
+                raise myschool_post.PilotError('The saved assignment changed or the job was cancelled. Nothing was saved.')
+            authorized[0]=True
+            yield
+    try:
+        out=MYSCHOOL_CREATE_RUNNER(req,authorize)
+        if req['op'] in ('save','verify') and (not out.get('verified') or not out.get('unpublished') or out.get('email') is not False):
+            raise myschool_post.PilotError('No verified unpublished result was returned. Check MySchool before retrying.')
+        queue.item_finished(job,nxt['idx'],nxt['key'],'done',result={'myschool_create':out})
+    except Exception as e:
+        if req['op']=='save' and not authorized[0]:
+            with _save_lock:
+                path=APP_DATA/'myschool-assignment-claims.json';claims=_read_json(path,{})
+                claim=job['assignment']+':'+req['preview']['course_id']
+                if claims.get(claim)==job['id']:
+                    del claims[claim];_atomic_write_json(path,claims)
+        message=str(e) if isinstance(e,ValueError) else 'MySchool creation stopped. Check MySchool before retrying.'
+        queue.item_finished(job,nxt['idx'],nxt['key'],'failed',error=message[:300])
+
+
 def start_worker():
     """Create the job queue (journal in App Support) and start its worker. Call once, when the app starts."""
     global QUEUE
@@ -1002,7 +1150,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 
@@ -1758,7 +1906,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Stopped after " + i + " students. Existing drafts remain available." : failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/overview.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -1785,7 +1933,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/overview.js", "/ui/vision.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/vision.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -1936,12 +2084,12 @@ class Handler(BaseHTTPRequestHandler):
                                                 "conflict": True, "current": c.current})
                 if self.path.startswith("/api/jobs"):
                     if self.path == "/api/jobs":
-                        enqueue = {"teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job}.get(body.get("type"), enqueue_draft_job)
+                        enqueue = {"myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job}.get(body.get("type"), enqueue_draft_job)
                         return self._send(200, {"job": _job_view(enqueue(body))})
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:
                         raise ValueError("bad job id")
-                    if action == "resume" and QUEUE.get(jid)["type"].startswith(("myschool_", "teams_post_")):
+                    if action == "resume" and QUEUE.get(jid)["type"].startswith(("myschool_", "teams_post_", "teams_create")):
                         raise ValueError("Posting jobs are not resumed. Check the destination and create a fresh preview.")
                     if action == "cancel":
                         job = QUEUE.cancel(jid)

@@ -1,7 +1,7 @@
 /* Saved assignments, the Design step and "Choose from Teams…".
    The saved assignment record is the centre: Setup, Design and (later) collection and approval all use the same
    record. Records are saved on this laptop (~/Library/Application Support/student-feedback/assignments) and hold no
-   student data. Nothing here sends anything to Teams or MySchool. Student-facing text and teacher-only guidance are
+   student data. Draft creation sends only reviewed student-facing title and instructions to Teams; publishing is not implemented. Student-facing text and teacher-only guidance are
    kept apart: only the student-facing part is ever offered for copying into Teams. */
 (() => {
   // ------------------------------------------------------------------ helpers
@@ -542,7 +542,7 @@
   }
   // ------------------------------------------------------------------ Design assignment
   const panel = $('[data-panel="design"]');
-  panel.append(make('p', 'hint', 'Plan a new assignment here, then copy its title and instructions into Teams. Feedback later uses the same ' +
+  panel.append(make('p', 'hint', 'Plan a new assignment here, then copy it or create an unpublished Teams draft. Feedback later uses the same ' +
     'saved assignment, so the wording, criteria and standards match. Student-facing text and your teacher-only notes are kept apart: ' +
     'only the student-facing part is offered for copying.'));
   const dz = make('div', 'design'); panel.append(dz);
@@ -684,8 +684,72 @@
   const stuActs = make('div', 'design-actions'); stuCol.append(stuActs);
   stuActs.append(button('Copy title', '', e => copy($('#atitle').value.trim(), e.target)),
     button('Copy instructions', '', e => copy(studentInstructions(), e.target)));
-  const later = button('Create draft in Teams', '', null); later.disabled = true; later.title = 'Coming later: creates an unpublished draft in Teams. Publishing stays a separate step you do.';
-  stuActs.append(later, make('span', 'hint-inline', 'coming later'));
+  const createDraft = button('Create draft in Teams', '', async () => {
+    draftMessage.textContent = '';
+    if(!designHasContent(design) || !design.teamsClass || !$('#atitle').value.trim()) {
+      setNote('Add a title, student task and intended Teams class first.', true); return;
+    }
+    if(design.submission.type === 'forms') { setNote('Forms quizzes need New quiz in Teams. This prototype creates ordinary assignments only.', true); return; }
+    useInSetup();
+    if(splitRubric($('#rubric').value).instructions !== studentInstructions().trim()) {
+      setNote('Use this design in Setup before creating the draft.', true); return;
+    }
+    const saved = await save(); if(!saved) { setNote('Save the assignment and resolve any conflict first.', true); return; }
+    draftExisting = false; draftOwner = saved.id; draftVersion = saved.version; draftSnapshot = JSON.stringify(currentRecord());
+    draftPreview.textContent = saved.design.teamsClass + '\n\n' + saved.title + '\n\n' + saved.instructions;
+    draftConfirm.checked = false; draftGo.disabled = true;
+    draftMessage.textContent = 'Creates an unpublished ordinary assignment. Only title and instructions are copied. Teams defaults remain for dates, points and recipients; review those in Teams before publishing. Files, notebook links and rubric objects are not attached. Teacher-only notes stay here.';
+    draftDialog.showModal();
+    try {
+      const previous = (await getJSON('/api/jobs?assignment=' + encodeURIComponent(saved.id))).jobs || [];
+      let receipt = null;
+      for(const j of previous.filter(j => j.type === 'teams_create' && j.state === 'completed')) {
+        const full = (await getJSON('/api/jobs/' + j.id)).job;
+        receipt = full?.drafts?.find(d => d.teams_create?.verified)?.teams_create;
+        if(receipt) break;
+      }
+      if(record?.id === saved.id && draftDialog.open && receipt) {
+        draftExisting = true; draftConfirm.checked = false; draftGo.disabled = true;
+        draftMessage.textContent = 'Previously verified unpublished draft: ' + receipt.class + ' → ' + receipt.title + '. Later local changes are not sent again. Review the existing draft in Teams. ' + receipt.url;
+      }
+    } catch(e) { /* Server duplicate protection remains authoritative if history is unavailable. */ }
+  });
+  stuActs.append(createDraft);
+  const draftDialog = make('dialog', 'teams-dialog'); draftDialog.setAttribute('aria-label', 'Create Teams draft');
+  draftDialog.append(make('h3', '', 'Create an unpublished Teams draft'));
+  const draftPreview = make('pre', 'teams-text-full'), draftMessage = make('p', 'status'); draftMessage.setAttribute('role','status');
+  const draftRecovery = make('input'); draftRecovery.type = 'url'; draftRecovery.setAttribute('aria-label','Existing empty draft URL (optional recovery)');
+  const draftRecoveryLabel = make('label', '', 'Recover a failed attempt: paste its existing empty Teams draft URL (optional). This reuses that draft; it will not create another.'); draftRecoveryLabel.append(draftRecovery);
+  const draftConfirm = make('input'); draftConfirm.type = 'checkbox';
+  const draftLabel = make('label', '', 'I checked the class, title and full student-facing instructions. Create an unpublished draft.'); draftLabel.prepend(draftConfirm);
+  let draftOwner = '', draftVersion = 0, draftSnapshot = '', draftBusy = false, draftExisting = false;
+  const draftGo = button('Create unpublished draft', 'primary', async () => {
+    if(draftBusy || draftExisting || !draftConfirm.checked) return;
+    if(record?.id !== draftOwner || JSON.stringify(currentRecord()) !== draftSnapshot || record.version !== draftVersion) {
+      draftGo.disabled = true; draftMessage.textContent = 'Assignment changed. Close and review a fresh preview.'; return;
+    }
+    draftBusy = true; draftGo.disabled = true; draftConfirm.disabled = true; createDraft.disabled = true;
+    try {
+      const d = await postJSON('/api/jobs', {type:'teams_create', assignment:draftOwner, version:draftVersion, confirm:true, recovery_url:draftRecovery.value.trim()});
+      if(d.error) throw Error(d.error);
+      for(;;) {
+        const out = await getJSON('/api/jobs/' + d.job.id), j = out.job;
+        if(!j) throw Error('Job unavailable. Check Teams Drafts before trying again.');
+        if(['queued','running'].includes(j.state)) { draftMessage.textContent = 'Chrome is creating the draft. Nothing will be published.'; await sleep(1200); continue; }
+        const result = j.drafts?.find(x => x.teams_create)?.teams_create;
+        if(j.state !== 'completed' || !result?.verified) throw Error(j.items?.find(x => x.state === 'failed')?.error || j.error || 'Creation stopped. Check Teams Drafts.');
+        draftMessage.textContent = 'Verified in Teams Drafts: ' + result.class + ' → ' + result.title + '. Title and full instructions match. Unpublished; review dates, recipients, files and rubric in Teams.';
+        break;
+      }
+    } catch(e) { draftMessage.textContent = e.message; }
+    finally { draftBusy = false; createDraft.disabled = false; draftConfirm.disabled = false; draftGo.disabled = true; }
+  });
+  draftGo.disabled = true;
+  draftConfirm.onchange = () => { draftGo.disabled = draftBusy || draftExisting || !draftConfirm.checked; };
+  draftRecovery.oninput = () => { draftConfirm.checked = false; draftGo.disabled = true; };
+  draftDialog.append(draftPreview, draftMessage, draftRecoveryLabel, draftLabel, draftGo, button('Close', '', () => draftDialog.close())); document.body.append(draftDialog);
+  $('#asg-pick').addEventListener('change', () => { if(!draftBusy) { draftDialog.close(); draftGo.disabled = true; draftOwner = ''; } });
+
   teaCol.append(make('span', 'teacher-tag', 'Teacher only · stays on this laptop'));
   const pBrief = make('pre', 'd-brief'); teaCol.append(pBrief);
   grid.append(stuCol, teaCol);
@@ -740,6 +804,15 @@
     const stds = designStandards(); if(stds.length) setStandards(stds);
     changed(); setNote('Setup now uses this design. Save the assignment to keep it.');
   }
+  window.feedbackAssignment.prepareDesign = async () => {
+    if(!designHasContent(design) || !$('#atitle').value.trim()) throw Error('Add a title and student task in Design first.');
+    useInSetup();
+    if(splitRubric($('#rubric').value).instructions !== studentInstructions().trim()) throw Error('Use this design in Setup before creating the assignment.');
+    const saved = await save();
+    if(!saved) throw Error('Save the assignment and resolve any conflict first.');
+    return saved;
+  };
+
   // Teacher-only brief at the top of Draft & review
   const reviewPanel = $('[data-panel="review"]');
   const brief = make('details', 'card brief-card teacher-only'), briefText = make('pre', '');

@@ -139,3 +139,15 @@ read one class and one assignment on 2026-11-01. Extraction is not marked comple
 compared with Teams by eye.
 
 Teams posting pilot (2026-11-02): Export & posting → Post reviewed feedback to Teams. One saved, approved student; read-only preview followed by explicit confirmation and Return. The preview shows destination, existing feedback and exact approved feedback. It may replace existing feedback; Return may notify the student. A verified receipt requires reopening the same submission under Returned. No bulk posting or automatic retries. Synthetic coverage is in tests/test_teams_post.py; live posting is not yet verified.
+
+## Create an unpublished Teams draft (2026-11-03)
+
+Design → Create draft in Teams synchronizes the design into Setup, saves it, and shows the full student-facing preview. The checkbox and Create unpublished draft button start a background job. Class, title and instructions come from the saved record; teacher-only notes are excluded. Forms quizzes are refused. Dates, points and recipients retain Teams defaults, and attachments/rubric objects are not created. Review those in Teams before publishing. No publishing action is implemented.
+
+Only one potentially mutating creation attempt is allowed per saved assignment in this prototype, including uncertain outcomes; a failure before editor authorization releases the claim. Check Teams Drafts and the job receipt instead of retrying. Failed/interrupted creation jobs cannot be resumed.
+
+For a failed attempt that left an empty draft, paste that draft’s editor URL in the optional recovery field and review/confirm again. The app reuses it and refuses different existing text. The live Senior Band trial passed after recovery; broad fresh-create reliability is not established. Instruction read-back preserves words and symbols while allowing Teams’ paragraph spacing.
+
+## Create assignment in MySchool (2026-11-03)
+
+In Design, choose Create assignment in MySchool. The app saves the student-facing design first. Load MySchool courses, choose the exact course, choose Formative/Summative and enter a due date. Read MySchool form and preview lists its learning outcomes; select at least one, review defaults and confirm Save unpublished assignment to MySchool. Publish is No, scheduled publication blank and Email students off. No grades/comments or attachments are added. A verified receipt appears after destination read-back and is shown again when the dialog is reopened. Later local edits are not automatically sent to a created assignment. An uncertain Save must be checked in MySchool before retrying.

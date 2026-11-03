@@ -68,3 +68,7 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 The runner discovers files automatically; counts depend on the current checkout. The last 17-file Mac run reported 586 passes and two UI-file failures. Separate reruns passed MySchool 44/44 and Teams statuses 29/29. Do not report that as a clean combined run. Newer feature tests are listed separately in WORKFLOW.md.
 
 Real-model measurements are deliberately outside the synthetic runner. Start Ollama and use `tools/draft_quality.py`; use `tools/transcribe_check.py` with image/reference-text pairs for transcription. Never add real exports, work, images, credentials or generated feedback to fixtures.
+
+`test_teams_create.py`: 30 isolated checks for student-facing payloads, Forms/browser guards, draft-editor identity, authorization before autosave, Save as draft without publishing, reopened exact read-back, stale/duplicate requests, changed-record revocation, and the full preview/confirm/job/receipt GUI flow. Uses invented Teams pages and a stand-in runner only.
+
+`test_myschool_create.py`: 32 isolated synthetic checks for student-facing payloads, required teacher choices, browser/host/new-page guards, unsafe publication defaults, preview without writes, outcome validation, explicit single Save, reopened read-back, stale/duplicate requests, pre-Save revocation and the complete course/preview/outcome/confirm/receipt GUI flow. No MySchool contact.
