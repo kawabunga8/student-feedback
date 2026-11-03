@@ -347,7 +347,7 @@
       .sort((a, b) => (cls && b.class_name.toLowerCase() === cls) - (cls && a.class_name.toLowerCase() === cls)).slice(0, 60);
     tlist.replaceChildren(...rows.map(x => {
       const r = make('div', 'teams-item'); r.setAttribute('role', 'listitem');
-      const t = make('div'); t.append(make('strong', '', x.title), make('div', 'hint-inline', `${x.class_name} · ${x.due_heading ? x.due_heading + ', ' : ''}${x.due_text.replace(/^due\s*/i, 'due ')}` +
+      const t = make('div'); t.append(make('strong', '', x.title), make('div', 'hint-inline', `${x.class_name} · ${x.due_heading ? x.due_heading + ', ' : ''}${x.due_text.replace(/^due\s*/i, 'due ')}${x.tab && x.tab !== 'Upcoming' ? ' · ' + x.tab : ''}` +
         (x.fractions.length ? ` · Teams counts ${x.fractions.join(' and ')} (not labelled by Teams)` : '')));
       r.append(t, button('Read this assignment', '', () => readOne(x)));
       return r;

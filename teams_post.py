@@ -36,7 +36,11 @@ def open_target(page, req, returned=False):
     f = s.frame()
     if returned:
         f.get_by_role('tab', name=re.compile(r'^Returned \(\d+\)$')).click()
-    f.get_by_text(req['target_name'], exact=True).wait_for(state='visible', timeout=15000)
+    try:
+        f.get_by_text(req['target_name'], exact=True).wait_for(state='visible', timeout=15000)
+    except Exception:
+        raise PilotError('The exact student was not found once in the expected Teams tab (class: ' + req['class'] +
+                         '). Check the saved Teams class and the name. Nothing was posted.') from None
     rows = f.get_by_role('row').filter(has=f.get_by_text(req['target_name'], exact=True))
     if rows.count() != 1:
         raise PilotError('The exact student was not found once in the expected Teams tab. Nothing was posted.')

@@ -11,13 +11,13 @@
   function field(label,control){const l=el('label',label);control.setAttribute('aria-label',label);l.append(control);form.append(l);return control;}
   const student=field('Reviewed student',el('select'));
   const name=field('Exact student name in the Teams roster',el('input'));name.placeholder='Last, First — exactly as the Teams roster shows it';
-  const nameRow=name.parentElement;nameRow.hidden=true;                 // shown only when the app can't find the student in Teams
+  const nameRow=name.parentElement;nameRow.style.display='none';                 // shown only when the app can't find the student in Teams
   const nameNote=el('p');nameNote.className='hint';form.append(nameNote);
   // Course Hub's class list gives "Last, First". Without it (Course Hub off) the teacher has to type the name.
   const defaultName=sid=>{const r=(typeof ROSTER!=='undefined'?ROSTER:[]).find(x=>x.id===sid);return r?r.last+', '+r.first:'';};
-  function setName(){name.value=defaultName(student.value);nameRow.hidden=!!name.value||!student.value;
+  function setName(){name.value=defaultName(student.value);nameRow.style.display=(name.value||!student.value)?'none':'';
     nameNote.textContent=!student.value?'':name.value?'Looking for “'+name.value+'” in the Teams roster (from Course Hub).':'Course Hub’s class list isn’t available, so type the name exactly as the Teams roster shows it.';}
-  const inspect=el('button','Read Teams destination and preview');inspect.type='button';form.append(inspect);
+  const inspect=el('button','Read Teams again and refresh the preview');inspect.type='button';form.append(inspect);
   const message=el('p');message.setAttribute('role','status');dlg.append(message);
   const box=el('div');box.className='teams-post-preview';dlg.append(box);
   const confirm=el('input');confirm.type='checkbox';
@@ -28,7 +28,10 @@
   const current=sid=>window.feedbackWorkspace?.cards().some(c=>window.feedbackWorkspace.payload(c).student_id===sid&&window.feedbackWorkspace.valid(c));
   function invalidate(){preview=null;box.replaceChildren();confirm.checked=false;save.disabled=true;}
   form.addEventListener('input',invalidate);form.addEventListener('change',invalidate);
-  student.onchange=setName;confirm.onchange=()=>{save.disabled=busy||!preview||!confirm.checked||!current(preview.student_id);};
+  student.onchange=()=>{setName();autoPreview();};
+  name.onchange=()=>{autoPreview();};                                     // typed a corrected name: look again
+  // The preview only reads Teams (nothing is changed), so it starts by itself once the app has a student and a name.
+  function autoPreview(){if(student.value&&name.value.trim()&&!busy)setTimeout(()=>{invalidate();run('inspect');},0);}confirm.onchange=()=>{save.disabled=busy||!preview||!confirm.checked||!current(preview.student_id);};
   async function flush(){if(!await window.feedbackAssignment?.saveForPosting())throw Error('Save the assignment and session, and resolve any conflict first.');}
   async function follow(job,owner,token){
     while(owner===aid()&&token===generation){
@@ -43,7 +46,8 @@
     if(busy){message.textContent='A Teams check is still running. Keep this dialog open until it finishes.';return;}
     const owner=aid(),token=++generation;invalidate();student.replaceChildren(new Option('Choose a saved, reviewed student…',''));
     try{await flush();const d=await(await fetch('/api/teams-post/approved?assignment='+encodeURIComponent(owner))).json();if(owner!==aid()||token!==generation)return;if(d.error)throw Error(d.error);
-      (d.students||[]).forEach(s=>student.add(new Option(s.name,s.student_id)));message.textContent='Choose one reviewed student. The app finds them in the Teams roster by name; you only need to type it if it can’t.';
+      (d.students||[]).forEach(s=>student.add(new Option(s.name,s.student_id)));message.textContent=(d.students||[]).length===1?'Reading Teams for the one reviewed student…':'Choose one reviewed student. The app reads Teams for them automatically and finds them by name; you only need to type the name if it can’t.';
+      if((d.students||[]).length===1){student.value=d.students[0].student_id;setName();autoPreview();}
     }catch(e){if(owner===aid()&&token===generation)message.textContent=e.message;}
   }
   async function run(op){
@@ -55,7 +59,7 @@
         const full=el('div',out.feedback);full.style.whiteSpace='pre-wrap';box.append(full);message.textContent='Preview only. Posting replaces the existing feedback and Returns this student’s work. This preview expires in 10 minutes.';
       }else{invalidate();message.textContent=out.verified?'Verified: feedback matches and the student appears in Returned. Check Teams, then record the Teams completion tick.':'Outcome uncertain. Check Teams before retrying.';}
     }catch(e){if(owner===aid()&&token===generation){invalidate();message.textContent=e.message;
-      if(/student was not found|roster name/i.test(e.message)){nameRow.hidden=false;nameNote.textContent='Couldn’t find “'+name.value+'” in Teams. Type the name exactly as the Teams roster shows it (usually Last, First), then preview again.';}}}
+      if(/student was not found|roster name/i.test(e.message)){nameRow.style.display='';nameNote.textContent='Couldn’t find “'+name.value+'” in Teams. Type the name exactly as the Teams roster shows it (usually Last, First), then preview again.';}}}
     finally{if(owner===aid()&&token===generation){busy=false;student.disabled=false;name.disabled=false;inspect.disabled=false;save.disabled=!preview||!confirm.checked||!current(preview.student_id);}}
   }
   inspect.onclick=()=>{invalidate();run('inspect');};save.onclick=()=>{if(preview&&confirm.checked)run('save');};launch.onclick=()=>{dlg.showModal();load();};

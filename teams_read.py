@@ -364,7 +364,7 @@ class Session:
 
     # ---- the only clicks this reader makes
     def click(self, kind, locator):
-        if kind not in ("rail-assignments", "list-row", "menu-button", "menu-student-view", "view-rubric"):
+        if kind not in ("rail-assignments", "list-tab", "list-row", "menu-button", "menu-student-view", "view-rubric"):
             raise ReadError("differs", f"internal: click kind '{kind}' is not allowed")
         locator.click(timeout=5000)
 
@@ -383,13 +383,49 @@ class Session:
         t = self.wait_for("assignment list", lambda t: bool(re.search(r"^Assignments\s*$", t, re.M)) and bool(parse_list(t)))
         return t
 
+    LIST_TABS = ("Upcoming", "Ready to grade", "Past due", "Returned")   # Teams shows only one tab's assignments at a time
+
+    def select_tab(self, name):
+        """Switch the Assignments list to one of its tabs (a plain read: it only changes what the list shows)."""
+        end = time.time() + 10
+        while True:                               # the tab strip is briefly absent while the page re-renders after a tab change
+            f = self.frame()
+            loc = f.get_by_role("tab", name=name) if f else None      # substring match: Teams adds counts around the tab names; each name is unique
+            if loc is not None and loc.count() == 1:
+                break
+            if time.time() > end:
+                raise ReadError("differs", f"The Assignments list has no '{name}' tab (found {loc.count() if loc is not None else 0}).")
+            self.page.wait_for_timeout(500)
+        if loc.get_attribute("aria-selected") != "true":
+            self.click("list-tab", loc)
+        end = time.time() + 8
+        while time.time() < end and loc.get_attribute("aria-selected") != "true":
+            self.page.wait_for_timeout(300)
+        self.page.wait_for_timeout(1200)         # let the rows for that tab render
+
     def list_items(self):
-        return parse_list(self.open_assignments())
+        """Every assignment Teams lists across its tabs, once each, tagged with the tab it was found on. Teams' first tab
+        (Upcoming) hides anything already due, so past-due and returned work is read from its own tabs."""
+        items = [dict(x, tab="Upcoming") for x in parse_list(self.open_assignments())]
+        seen = {(x["class_name"].strip(), x["title"].strip()) for x in items}
+        for name in self.LIST_TABS[1:]:
+            try:
+                self.select_tab(name)
+                found = parse_list(self.text())
+            except ReadError:
+                continue                            # a tab that can't be read is skipped, not guessed at
+            self.note(f"tab {name}: {len(found)} assignments")
+            for x in found:
+                key = (x["class_name"].strip(), x["title"].strip())
+                if key not in seen:
+                    seen.add(key); items.append(dict(x, tab=name))
+        return items
 
     def open_one(self, cls, title):
         """Open the assignment whose class and title match exactly, and read its roster counts."""
         items = self.list_items()
         want = match_assignment(items, cls, title)
+        self.select_tab(want.get("tab", "Upcoming"))      # the row is only on screen under the tab it was listed on
         f = self.frame()
         rows = f.get_by_role("listitem")
         hit = None
