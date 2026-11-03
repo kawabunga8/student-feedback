@@ -66,145 +66,112 @@
   $('#asg-pick')?.addEventListener('change',()=>{generation++;busy=false;student.disabled=false;name.disabled=false;inspect.disabled=false;invalidate();student.replaceChildren();message.textContent='Assignment changed. Reopen this pilot.';});
 })();
 
-/* Every reviewed student in one run. No new posting path: it drives the one-student pilot above (same /api/jobs preview and
-   Post, same approval, preview-claim and read-back checks) one student at a time. Read Teams for everyone first (nothing is
-   changed), confirm once, then post and Return in order; the first problem stops the run. Return may notify each student. */
+/* Post to Teams: one student or the whole class, on the same engine. Reading and posting each run in ONE Chrome session
+   (teams_batch.py): Teams is opened once and the roster is walked. Reading changes nothing and starts by itself; posting needs
+   your one confirmation, re-checks each student's approval at the moment of writing, and stops at the first problem.
+   Return may notify each student. */
 (() => {
   const $=s=>document.querySelector(s), el=(tag,text='')=>{const e=document.createElement(tag);e.textContent=text;return e;};
   const aid=()=>$('#asg-pick')?.value||'';
   const post=async b=>(await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json();
   const pause=()=>new Promise(r=>setTimeout(r,1200));
-  const FRESH_MS=8*60*1000;                          // the server refuses previews older than 10 minutes
-  const card=el('div');card.className='card teams-bulk';
-  card.append(el('h3','Teams — all reviewed students'),el('p','Reads Teams for every saved, reviewed student first (nothing is changed), then, after you confirm once, posts each one’s feedback and Returns it, one at a time. It stops at the first problem and tells you who was done. Each student gets the same checks as the one-student pilot. Return may notify students. Live posting has not yet been verified: try one student in the pilot above first.'));
-  const launch=el('button','Post all reviewed feedback to Teams…');launch.type='button';card.append(launch);$('#step-delivery').append(card);
-  const dlg=el('dialog');dlg.className='teams-dialog';dlg.setAttribute('aria-label','Teams bulk posting');dlg.append(el('h3','Teams — all reviewed students'));
+  const dlg=el('dialog');dlg.className='teams-dialog';dlg.setAttribute('aria-label','Teams bulk posting');
+  const title=el('h3');dlg.append(title);
   const message=el('p');message.setAttribute('role','status');dlg.append(message);
   const table=el('div');table.className='teams-bulk-rows';dlg.append(table);
-  const refresh=el('button','Reload reviewed students');refresh.type='button';dlg.append(refresh);
-  const previewAll=el('button','Read Teams for all');previewAll.type='button';previewAll.disabled=true;dlg.append(previewAll);
-  const redo={checked:false};   // students already Returned are skipped: the app posts from the 'To return' list only
-  const confirm=el('input');confirm.type='checkbox';const confirmText=el('span');const confirmLabel=el('label');confirmLabel.append(confirm,confirmText);dlg.append(confirmLabel);
-  const save=el('button','Post feedback and Return for all previewed students');save.type='button';save.disabled=true;dlg.append(save);
-  const stop=el('button','Stop after current student');stop.type='button';stop.disabled=true;dlg.append(stop);
-  const close=el('button','Close');close.type='button';close.onclick=()=>dlg.close();dlg.append(close);document.body.append(dlg);
-  let rows=[],generation=0,busy=false,halt=false;
-  const current=sid=>window.feedbackWorkspace?.cards().some(c=>window.feedbackWorkspace.payload(c).student_id===sid&&window.feedbackWorkspace.valid(c));
+  const again=el('button','Read Teams again');again.type='button';
+  const confirm=el('input');confirm.type='checkbox';const confirmText=el('span');const confirmLabel=el('label');confirmLabel.append(confirm,confirmText);
+  const save=el('button','Post feedback and Return');save.type='button';save.disabled=true;
+  const stop=el('button','Stop');stop.type='button';stop.disabled=true;
+  const close=el('button','Close');close.type='button';close.onclick=()=>dlg.close();
+  dlg.append(confirmLabel,save,stop,again,close);document.body.append(dlg);
+  let rows=[],generation=0,busy=false,previewJob='',curJob='';
+  const ws=()=>window.feedbackWorkspace;
+  const current=sid=>ws()?.cards().some(c=>ws().payload(c).student_id===sid&&ws().valid(c));
   const defaultName=sid=>{const r=(typeof ROSTER!=='undefined'?ROSTER:[]).find(x=>x.id===sid);return r?r.last+', '+r.first:'';};
-  const ready=()=>rows.filter(r=>r.state==='previewed'&&r.preview);
-  // Already posted by this app (and unchanged), or Returned according to the last Teams status read.
-  function alreadyDone(sid){const ws=window.feedbackWorkspace;const c=ws?.cards().find(x=>ws.payload(x).student_id===sid);if(!c)return '';
-    const t=(ws.posted.get(c)||{}).teams;if(t&&t.bound===JSON.stringify(ws.payload(c)))return 'posted';return c.dataset.tstatus==='Returned'?'Returned in Teams':'';}
-
+  const ready=()=>rows.filter(r=>r.state==='ready');
   function draw(){
     table.replaceChildren();
     rows.forEach(r=>{
       const line=el('div');line.style.margin='6px 0';
       r.nameInput.disabled=busy||r.state==='posted';
-      const status=el('span',r.state==='skipped'?'already '+r.already+': skipped (change it in Teams if needed)':r.state==='posted'?'✓ posted and Returned (verified)':r.state==='previewed'?'ready: Teams found “'+r.preview.target_name+'”'+(r.preview.existing?' · existing feedback will be replaced':''):r.error?'⚠ '+r.error:r.state==='working'?'working…':'not read yet');
-      line.append(el('strong',r.name+'  '),r.nameInput,el('br'),status);table.append(line);
+      const status=r.state==='posted'?'✓ posted and Returned (verified)':r.state==='ready'?'ready'+(r.existing?' · replaces the feedback already there':''):r.state==='skipped'?'already Returned in Teams: skipped':r.state==='working'?'working…':r.state==='error'?'⚠ '+r.error:'waiting';
+      line.append(el('strong',r.name+'  '),r.nameInput,el('br'),el('span',status));table.append(line);
     });
     const n=ready().length;
-    confirmText.textContent=' I checked the '+n+' previews (class, assignment, each student and exact feedback). Post and Return these '+n+' students, one after another; they may be notified.';
-    previewAll.disabled=busy||!rows.length;save.disabled=busy||!n||!confirm.checked;stop.disabled=!busy;
+    confirmText.textContent=' I checked the '+n+' student'+(n===1?'':'s')+' (class, assignment and exact feedback). Post and Return '+(n===1?'this student':'these '+n+', one after another')+'; they may be notified.';
+    confirmLabel.hidden=!n;save.hidden=!n;save.disabled=busy||!n||!confirm.checked;stop.disabled=!busy;again.disabled=busy;
   }
   confirm.onchange=draw;
   async function flush(){if(!await window.feedbackAssignment?.saveForPosting?.())throw Error('Save the assignment and session, and resolve any conflict first.');}
-  async function follow(job,owner,token){
-    for(let i=0;i<300;i++){
+  // Follow one job, updating the rows as each student's result arrives.
+  async function follow(jobId,owner,token,onItem){
+    for(let i=0;i<900;i++){
       if(token!==generation||owner!==aid())throw Error('The assignment changed. Stopped.');
-      const j=(await(await fetch('/api/jobs/'+job.id)).json()).job;if(!j)throw Error('Job not found. Check Teams.');
-      if(['queued','running','waiting_for_sign_in'].includes(j.state)){message.textContent='Chrome is working in Teams. Sign in there if asked. Keep this dialog open.';await pause();continue;}
-      const fail=j.items?.find(x=>x.state==='failed');if(j.state!=='completed'||fail)throw Error(fail?.error||j.error||'The job stopped. Check Teams.');
-      const out=j.drafts?.find(d=>d.teams_post)?.teams_post;if(!out)throw Error('No verified result. Check Teams before retrying.');return out;
+      const j=(await(await fetch('/api/jobs/'+jobId)).json()).job;if(!j)throw Error('Job not found. Check Teams.');
+      const drafts=new Map((j.drafts||[]).map(d=>[d.key,d.teams_batch]));
+      (j.items||[]).forEach(it=>onItem(it,drafts.get(it.key),j));draw();
+      if(['queued','running'].includes(j.state)){message.textContent='Working in Teams… Chrome is open for this one session; sign in there if asked.';await pause();continue;}
+      if(j.state==='waiting_for_sign_in')throw Error('Teams needs you to sign in, in the Chrome window. Then try again.');
+      return j;
     }
     throw Error('Timed out waiting for Teams. Check Teams before retrying.');
   }
-  const inspectBody=(owner,r)=>({type:'teams_post',op:'inspect',assignment:owner,student_id:r.id,target_name:r.nameInput.value.trim()});
-  async function load(){
-    const owner=aid(),token=++generation;rows=[];draw();
-    if(!owner){message.textContent='Open a saved assignment first.';return;}
-    try{await flush();const d=await(await fetch('/api/teams-post/approved?assignment='+encodeURIComponent(owner))).json();if(d.error)throw Error(d.error);
-      if(owner!==aid()||token!==generation)return;
-      rows=(d.students||[]).map(s=>{const nameInput=el('input');nameInput.value=defaultName(s.student_id);nameInput.placeholder='Last, First — as the Teams roster shows it';nameInput.setAttribute('aria-label','Teams roster name for '+s.name);
-        nameInput.onchange=()=>{const r=rows.find(x=>x.nameInput===nameInput);if(r&&r.state!=='posted'){r.state='';r.preview=null;r.error='';confirm.checked=false;draw();}};
-        return {id:s.student_id,name:s.name,nameInput,state:'',preview:null,error:'',already:alreadyDone(s.student_id)};});
-      message.textContent=rows.length?rows.length+' reviewed students. Names are filled from Course Hub; correct one only if Teams spells it differently.':'No current saved approvals. Review each student first.';
-      draw();
-    }catch(e){if(owner===aid()&&token===generation)message.textContent=e.message;}
-  }
-  async function readStatuses(owner,token){
-    try{const rec=(await(await fetch('/api/assignments/'+owner)).json()).assignment,t=(rec&&rec.teams)||{};if(!t.className||!t.title)return null;
-      const d=await post({type:'teams_students',assignment:owner,class:t.className,title:t.title});if(d.error)return null;
-      for(let i=0;i<300;i++){
-        if(token!==generation||owner!==aid())return null;
-        const j=(await(await fetch('/api/jobs/'+d.job.id)).json()).job;if(!j)return null;
-        if(['queued','running','waiting_for_sign_in'].includes(j.state)){message.textContent='Reading who is already Returned in Teams… Chrome opens for this; sign in there if asked.';await pause();continue;}
-        const res=(j.drafts||[]).find(x=>x.teams_students)?.teams_students;if(!res)return null;
-        try{await fetch('/api/jobs/'+d.job.id+'/delivered',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:['students']})});}catch(e){}
-        if(typeof TEAMS!=='undefined'&&typeof applyTeams==='function'){TEAMS={assignment_id:owner,title:res.title,assignment:res.title,due:res.due||'',students:res.students};applyTeams();}   // the table shows Returned too
-        return res.students;
-      }
-    }catch(e){}
-    return null;
-  }
-  async function readAll(){
-    if(busy)return;const owner=aid(),token=++generation;busy=true;halt=false;confirm.checked=false;draw();
+  const names=()=>rows.map(r=>({student_id:r.id,target_name:r.nameInput.value.trim()}));
+  async function readTeams(){
+    if(busy)return;const owner=aid(),token=++generation;busy=true;confirm.checked=false;previewJob='';
+    rows.forEach(r=>{if(r.state!=='posted'){r.state='working';r.error='';r.existing='';}});draw();
     try{await flush();
-      const roster=await readStatuses(owner,token);       // null if it can't be read: then every student is checked one by one, as before
-      if(roster){const by=new Map(roster.map(x=>[x.name.trim().toLowerCase(),x.status]));
-        rows.forEach(r=>{if(r.state==='posted')return;const st=by.get(r.nameInput.value.trim().toLowerCase());
-          if(st===undefined)r.rosterMissing=true;else{r.rosterMissing=false;r.already=st==='Returned'?'Returned in Teams':(r.already==='posted'?'posted':'');}});}
-      for(const r of rows){
-        if(halt||owner!==aid()||token!==generation)break;if(r.state==='posted')continue;
-        if(r.rosterMissing){r.state='';r.error='Not on the Teams roster under “'+r.nameInput.value.trim()+'”. Type the name exactly as Teams shows it.';draw();continue;}
-        if(r.already&&!redo.checked){r.state='skipped';r.error='';draw();continue;}
-        if(!r.nameInput.value.trim()){r.error='Type the name exactly as Teams shows it.';draw();continue;}
-        r.state='working';r.error='';r.preview=null;draw();
-        try{if(!current(r.id))throw Error('No longer reviewed. Review and save again.');
-          const d=await post(inspectBody(owner,r));if(d.error)throw Error(d.error);
-          r.preview={...await follow(d.job,owner,token),jobId:d.job.id,at:Date.now()};r.state='previewed';
-        }catch(e){if(/already Returned/i.test(e.message)){r.state='skipped';r.already='Returned in Teams';r.error='';}else{r.state='';r.error=e.message;}}
-        draw();
-      }
-      const skipped=rows.filter(r=>r.state==='skipped').length,warn=rows.filter(r=>r.error).length;
-      message.textContent=ready().length+' ready to post'+(skipped?' · '+skipped+' already Returned (skipped)':'')+(warn?' · '+warn+' need attention (⚠, not posted)':'')+'. Nothing was changed in Teams. Previews expire after 10 minutes.';
-    }catch(e){message.textContent=e.message;}
+      const asked=rows.filter(r=>r.state!=='posted');if(!asked.length)return;
+      const d=await post({type:'teams_batch',op:'inspect',assignment:owner,students:asked.map(r=>({student_id:r.id,target_name:r.nameInput.value.trim()}))});if(d.error)throw Error(d.error);
+      curJob=d.job.id;
+      const j=await follow(d.job.id,owner,token,(it,res)=>{const r=rows.find(x=>x.id===it.key);if(!r||r.state==='posted')return;
+        if(it.state==='done'&&res){if(res.skipped){r.state='skipped';}else{r.state='ready';r.existing=(res.existing||'').trim();}}
+        else if(it.state==='failed'){r.state='error';r.error=it.error||'Teams did not return a result.';}});
+      previewJob=d.job.id;
+      const skipped=rows.filter(r=>r.state==='skipped').length,bad=rows.filter(r=>r.state==='error').length;
+      message.textContent=ready().length+' ready to post'+(skipped?' · '+skipped+' already Returned (skipped)':'')+(bad?' · '+bad+' need attention (⚠, not posted)':'')+'. Nothing was changed in Teams.';
+    }catch(e){message.textContent=e.message;rows.forEach(r=>{if(r.state==='working'){r.state='error';r.error=e.message;}});}
     finally{busy=false;draw();}
   }
   async function postAll(){
-    if(busy||!confirm.checked)return;const owner=aid(),token=++generation;busy=true;halt=false;const todo=ready();draw();
+    if(busy||!confirm.checked||!previewJob)return;const owner=aid(),token=++generation;busy=true;const todo=ready();
+    todo.forEach(r=>{r.state='working';});draw();
     const done=[];let problem='';
     try{await flush();
-      for(const r of todo){
-        if(halt){problem='Stopped by you.';break;}
-        if(owner!==aid()||token!==generation){problem='The assignment changed.';break;}
-        r.state='working';draw();
-        try{if(!current(r.id))throw Error('No longer reviewed.');
-          let p=r.preview;
-          if(Date.now()-p.at>FRESH_MS){          // too old for the server: read Teams again and require the same values
-            const d=await post(inspectBody(owner,r));if(d.error)throw Error(d.error);
-            const again={...await follow(d.job,owner,token),jobId:d.job.id,at:Date.now()};
-            if(again.feedback!==p.feedback||again.existing!==p.existing||again.target_name!==p.target_name||again.title!==p.title||again.class!==p.class)throw Error('Teams or the approved feedback changed since you confirmed. Not posted.');
-            p=r.preview=again;
-          }
-          const d=await post({type:'teams_post',op:'save',assignment:owner,preview_id:p.jobId,confirm:true});if(d.error)throw Error(d.error);
-          const out=await follow(d.job,owner,token);
-          if(!out.verified)throw Error('The outcome is uncertain. Check Teams before trying again.');
-          r.state='posted';done.push(r.name);window.feedbackWorkspace?.markPosted?.(r.id,'teams');   // the same tick the teacher would add by hand
-        }catch(e){r.state='';r.preview=null;r.error=e.message;problem=r.name+': '+e.message;draw();break;}   // a Return may have run: read Teams again
-        draw();
-      }
-    }catch(e){problem=e.message;}
-    finally{busy=false;confirm.checked=false;draw();}
+      if(todo.some(r=>!current(r.id)))throw Error('A student is no longer reviewed. Read Teams again.');
+      const d=await post({type:'teams_batch',op:'save',assignment:owner,preview_id:previewJob,confirm:true,students:todo.map(r=>({student_id:r.id}))});if(d.error)throw Error(d.error);
+      curJob=d.job.id;
+      await follow(d.job.id,owner,token,(it,res)=>{const r=todo.find(x=>x.id===it.key);if(!r||r.state==='posted')return;
+        if(it.state==='done'&&res&&res.verified){r.state='posted';done.push(r.name);ws()?.markPosted?.(r.id,'teams');}
+        else if(it.state==='failed'){r.state='error';r.error=it.error||'Not posted.';if(!problem&&!/Not attempted/.test(r.error))problem=r.name+': '+r.error;}});
+    }catch(e){problem=problem||e.message;todo.forEach(r=>{if(r.state==='working'){r.state='error';r.error=e.message;}});}
+    finally{busy=false;confirm.checked=false;previewJob='';draw();}
     const left=todo.filter(r=>r.state!=='posted').map(r=>r.name);
     message.textContent=(done.length?'Posted and Returned (verified): '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done: each is marked as posted.');
+    draw();
   }
-  refresh.onclick=load;previewAll.onclick=readAll;save.onclick=postAll;stop.onclick=()=>{halt=true;message.textContent='Stopping after the current student…';};
-  // One entry point for the whole class: open, load the reviewed students and read Teams for all of them at once (read-only).
-  // All that is left is the one confirmation before anything is posted.
-  async function openAndRead(){dlg.showModal();await load();if(rows.length&&!busy)readAll();}
-  launch.onclick=openAndRead;window.postToAll=openAndRead;
-  $('#asg-pick')?.addEventListener('change',()=>{generation++;busy=false;halt=true;rows=[];draw();message.textContent='Assignment changed. Reopen this dialog.';});
+  again.onclick=readTeams;save.onclick=postAll;
+  stop.onclick=async()=>{if(curJob){try{await fetch('/api/jobs/'+curJob+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}catch(e){}}message.textContent='Stopping after the current student…';};
+  // ids: the students to post (one or several); null = every reviewed student. Opens, reads Teams by itself, and waits for the one confirmation.
+  async function postToTeams(ids){
+    const owner=aid();generation++;busy=false;rows=[];previewJob='';draw();
+    dlg.showModal();title.textContent='Post to Teams';message.textContent='Loading reviewed students…';
+    if(!owner){message.textContent='Open a saved assignment first.';return;}
+    try{await flush();const d=await(await fetch('/api/teams-post/approved?assignment='+encodeURIComponent(owner))).json();if(d.error)throw Error(d.error);
+      const posted=sid=>{const w=ws();const c=w?.cards().find(x=>w.payload(x).student_id===sid);const t=c&&(w.posted.get(c)||{}).teams;return !!t&&t.bound===JSON.stringify(w.payload(c));};
+      const list=(d.students||[]).filter(s=>ids?ids.includes(s.student_id):!posted(s.student_id));   // the whole class skips students this app already posted
+      rows=list.map(s=>{const nameInput=el('input');nameInput.value=defaultName(s.student_id);nameInput.placeholder='Last, First — as the Teams roster shows it';nameInput.setAttribute('aria-label','Teams roster name for '+s.name);
+        nameInput.onchange=()=>{const r=rows.find(x=>x.nameInput===nameInput);if(r&&r.state!=='posted'){r.state='';r.error='';confirm.checked=false;draw();}};
+        return {id:s.student_id,name:s.name,nameInput,state:'',error:'',existing:''};});
+      title.textContent=rows.length===1?'Post to Teams — '+rows[0].name:'Post to Teams — '+rows.length+' students';
+      if(!rows.length){message.textContent='No reviewed student to post. Review and save first.';draw();return;}
+      draw();readTeams();
+    }catch(e){message.textContent=e.message;}
+  }
+  window.postToTeams=postToTeams;window.postToAll=()=>postToTeams(null);
+  document.querySelector('.teams-post-pilot')?.remove();   // the old one-student card: a row's Post button now does the same on this engine
+  const launch=el('button','Post all reviewed feedback to Teams…');launch.type='button';launch.onclick=()=>postToTeams(null);
+  $('#asg-pick')?.addEventListener('change',()=>{generation++;busy=false;rows=[];draw();message.textContent='Assignment changed. Reopen this dialog.';});
   draw();
 })();

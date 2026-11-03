@@ -167,7 +167,7 @@
   function renderPostTable() {
     const all = cards().filter(c => c.querySelector('.work').value.trim()).sort((a,b) => surname(payload(a).name).localeCompare(surname(payload(b).name)));
     const showMs = all.some(c => valid(c) && payload(c).myschool_comment.trim());
-    const data = all.map(c => ({name:payload(c).name || 'Unnamed student', level:payload(c).level, t:teamsChip(c), m:msChip(c), ts:c.dataset.tstatus || ''}));
+    const data = all.map(c => ({id:payload(c).student_id, name:payload(c).name || 'Unnamed student', level:payload(c).level, t:teamsChip(c), m:msChip(c), ts:c.dataset.tstatus || ''}));
     const sig = JSON.stringify([showMs, data]);
     if(sig === tableSig) return; tableSig = sig;
     const n = data.length, count = (arr, f) => arr.filter(f).length;
@@ -176,9 +176,12 @@
       (showMs ? ' · MySchool: ' + count(data, d => d.m[1] === 'good') + ' of ' + n + ' saved' : '') : 'No students yet. Load an Assessment folder first.';
     bPostTeams.disabled = !ready && !changed; bPostMs.hidden = !showMs;
     const th = (t) => { const e = make('th','',t); e.scope = 'col'; return e; };
-    const head = make('tr'); head.append(th('Student'), th('Level'), th('Teams')); if(showMs) head.append(th('MySchool'));
+    const head = make('tr'); head.append(th('Student'), th('Level'), th('Teams')); if(showMs) head.append(th('MySchool')); head.append(th(''));
     const chip = ([t, k]) => { const td = make('td'); td.append(make('span','chip ' + k, t)); return td; };
-    const body = data.map(d => { const tr = make('tr'); tr.append(make('td','', d.name), make('td','posting-lvl', d.level ? d.level + (levelCode(d.level) ? ' (' + levelCode(d.level) + ')' : '') : '—'), chip(d.t)); if(showMs) tr.append(chip(d.m)); return tr; });
+    const body = data.map(d => { const tr = make('tr'); tr.append(make('td','', d.name), make('td','posting-lvl', d.level ? d.level + (levelCode(d.level) ? ' (' + levelCode(d.level) + ')' : '') : '—'), chip(d.t)); if(showMs) tr.append(chip(d.m));
+      const act = make('td','posting-act');   // post just this student (the same engine as Post to all)
+      if(d.id && (d.t[1] === 'ready' || d.t[1] === 'warn')) { const b = make('button','','Post'); b.type = 'button'; b.title = 'Post only this student to Teams'; b.onclick = () => { if(window.postToTeams) window.postToTeams([d.id]); }; act.append(b); }
+      tr.append(act); return tr; });
     postTable.replaceChildren(make('thead','')); postTable.firstChild.append(head); const tb = make('tbody',''); tb.append(...body); postTable.append(tb);
   }
   function postingSummary(c) {

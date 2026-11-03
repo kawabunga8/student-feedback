@@ -952,6 +952,146 @@ def _run_teams_post_job(queue, job):
         queue.item_finished(job, nxt['idx'], nxt['key'], 'failed', error=message[:300])
 
 
+def _run_teams_batch_job(queue, job):
+    """One Chrome session for one student or the whole class (teams_batch.py). Each student is judged on their own: a read-only
+    preview, a dry run, or a post that needs that student's approval to be current at the moment of writing."""
+    aid = job['assignment']
+    req = queue.request_of(job)['request']
+    by = {s['student_id']: s for s in req['students']}
+    idx = {i['key']: i['idx'] for i in job['items']}
+    mode, reported = req['mode'], set()
+    def current(sid):
+        st = teams_approved(aid, sid)
+        if teams_post.digest(st) != by[sid]['approval_sha'] or teams_destination(load_assignment_record(aid)) != req['destination']:
+            raise teams_post.PilotError('The approval or Teams destination changed. Nothing was posted. Read Teams again.')
+        if queue.cancel_requested(job['id']):
+            raise teams_post.PilotError('The job was cancelled before posting. Nothing was posted.')
+    def item(it):
+        sid = it['student_id']
+        if sid in reported or sid not in idx:
+            return
+        reported.add(sid)
+        if it.get('error'):
+            return queue.item_finished(job, idx[sid], sid, 'failed', error=it['error'][:300])
+        out = {k: v for k, v in it.items() if k != 'student_id'}
+        out.update(student_id=sid, approval_sha=by[sid]['approval_sha'], destination=req['destination'], target_name=by[sid]['target_name'], feedback=by[sid]['feedback'])
+        queue.item_finished(job, idx[sid], sid, 'done', result={'teams_batch': out})
+    final = TEAMS_BATCH_RUNNER(req, current, item, job['id'], queue)
+    why = final if isinstance(final, str) else ''
+    for sid, i in idx.items():                           # anything not reported was not attempted (an earlier problem, or the run ended)
+        if sid not in reported:
+            queue.item_finished(job, i, sid, 'failed', error=(why or 'Not attempted: the run stopped before this student.')[:300])
+
+
+def teams_batch_runner(req, current, item, jid, queue):
+    """Run teams_batch.py in the tools Python. For a post the child asks permission once per student; the parent re-checks that
+    student's approval under the save lock and holds the lock until the child reports that student. Returns an error text or ''."""
+    if os.environ.get('SF_FORBID_BROWSER'):
+        return 'Browser use is switched off for tests.'
+    py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
+    proc = subprocess.Popen([py, str(HERE / 'teams_batch.py')], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    quiet = 240 if req['mode'] == 'save' else 150
+    state = {'timer': None}
+    def arm():
+        if state['timer']:
+            state['timer'].cancel()
+        state['timer'] = threading.Timer(quiet, proc.kill); state['timer'].daemon = True; state['timer'].start()
+    held, error = False, ''
+    try:
+        arm()
+        proc.stdin.write(json.dumps({k: v for k, v in req.items() if k != 'destination'}) + '\n'); proc.stdin.flush()
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            arm()
+            if 'authorize' in msg:
+                _save_lock.acquire(); held = True
+                try:
+                    current(msg['authorize']); proc.stdin.write('allow\n')
+                except Exception:
+                    proc.stdin.write('deny\n')
+                proc.stdin.flush()
+            elif 'item' in msg:
+                item(msg['item'])
+                if held:
+                    _save_lock.release(); held = False
+            elif 'ok' in msg:
+                if not msg['ok']:
+                    error = msg.get('error', 'Teams batch failed.')
+                return error
+        return 'Teams did not finish. Check Teams before retrying.'
+    finally:
+        if state['timer']:
+            state['timer'].cancel()
+        if held:
+            _save_lock.release()
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(); proc.stdin.close(); proc.stdout.close()
+
+
+TEAMS_BATCH_RUNNER = teams_batch_runner
+
+
+def enqueue_teams_batch_job(body):
+    """op: inspect (read-only preview), dry (opens each panel and checks Return, changes nothing) or save (post + Return).
+    students: [{student_id, target_name}]. A save needs a completed inspect job (preview_id) and the teacher's confirmation."""
+    if QUEUE is None:
+        raise ValueError('The job worker is not running.')
+    aid = str(body.get('assignment', '')); rec = load_assignment_record(aid)
+    destination = teams_destination(rec); rel, _ = session_folder(aid, rec)
+    op = body.get('op')
+    if op not in ('inspect', 'dry', 'save'):
+        raise ValueError('Choose preview, dry run or post.')
+    asked = [x for x in (body.get('students') or []) if isinstance(x, dict)][:60]
+    if not asked:
+        raise ValueError('Choose at least one student.')
+    entries, pid = [], ''
+    if op == 'save':
+        if body.get('confirm') is not True:
+            raise ValueError('Confirm the exact students and feedback before Return.')
+        pid = str(body.get('preview_id', ''))
+        if not JOB_ID.fullmatch(pid):
+            raise ValueError('Read Teams for these students first.')
+        pj = QUEUE.get(pid, with_results=True)
+        if pj['assignment'] != aid or pj['type'] != 'teams_batch_inspect' or pj['state'] != 'completed':
+            raise ValueError('This is not a completed Teams preview for this assignment.')
+        previews = {d['key']: d['teams_batch'] for d in pj.get('drafts', []) if 'teams_batch' in d}
+        for x in asked:
+            sid = str(x.get('student_id', ''))
+            pv = previews.get(sid)
+            if not pv or 'existing' not in pv or pv.get('skipped'):
+                raise ValueError('A student has no usable preview. Read Teams again.')
+            if time.time() - pv['read_at'] > 900:
+                raise ValueError('The Teams preview expired. Read Teams again.')
+            st = teams_approved(aid, sid)
+            if pv['approval_sha'] != teams_post.digest(st) or pv['destination'] != destination:
+                raise ValueError('An approval or the Teams destination changed. Read Teams again.')
+            entries.append({'student_id': sid, 'target_name': pv['target_name'], 'feedback': st['feedback'], 'approval_sha': pv['approval_sha'], 'preview_existing': pv['existing']})
+    else:
+        for x in asked:
+            sid = str(x.get('student_id', '')); name = str(x.get('target_name', '')).strip()
+            if not name:
+                raise ValueError('Every student needs the name Teams shows.')
+            st = teams_approved(aid, sid)
+            entries.append({'student_id': sid, 'target_name': name, 'feedback': st['feedback'], 'approval_sha': teams_post.digest(st), 'preview_existing': ''})
+    req = {'mode': op, 'class': destination['class'], 'title': destination['title'], 'source': destination['source'], 'destination': destination, 'students': entries}
+    with _save_lock:
+        if any(j['type'].startswith(('teams_post_', 'teams_batch_')) and j['state'] in ('queued', 'running', 'waiting_for_sign_in') for j in QUEUE.list_for(aid)):
+            raise ValueError('A Teams posting job is already active for this assignment.')
+        if op == 'save':
+            path = APP_DATA / 'teams-preview-claims.json'; claims = _read_json(path, {})
+            keys = [pid + ':' + e['student_id'] for e in entries]
+            if any(k in claims for k in keys):
+                raise ValueError('A preview was already used for posting. Read Teams again.')
+            for k in keys:
+                claims[k] = True
+            _atomic_write_json(path, claims)
+        return QUEUE.enqueue('teams_batch_' + op, aid, rel, req, [{'key': e['student_id'], 'work_sha': ''} for e in entries])
+
+
 def enqueue_teams_post_job(body):
     if QUEUE is None:
         raise ValueError('The job worker is not running.')
@@ -1152,7 +1292,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 
@@ -2095,7 +2235,7 @@ class Handler(BaseHTTPRequestHandler):
                                                 "conflict": True, "current": c.current})
                 if self.path.startswith("/api/jobs"):
                     if self.path == "/api/jobs":
-                        enqueue = {"myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job}.get(body.get("type"), enqueue_draft_job)
+                        enqueue = {"myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job, "teams_batch": enqueue_teams_batch_job}.get(body.get("type"), enqueue_draft_job)
                         return self._send(200, {"job": _job_view(enqueue(body))})
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:
