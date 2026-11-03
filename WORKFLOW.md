@@ -20,7 +20,7 @@ Mandatory review remains in place. Bulk automated posting stays disabled. Qualit
 
 **Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
 
-**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
+**Next milestone:** complete one student end to end: collect work, draft feedback, teacher edits and selects the level, teacher approves, read-only Teams posting preview, then an explicitly confirmed Teams Return and MySchool save with read-back. No live posting or save is verified yet. In parallel, evaluate the criterion-by-criterion prompt refinement against the 2/7 baseline; no completed comparison result is available. Three-run model consistency, broader collection and real image transcription remain open.
 
 ## Historical handoff notes (2026-10-30)
 
@@ -726,3 +726,16 @@ Updated README, the current workflow/architecture summaries, workspace notes and
 ## Image-preview assignment guard (2026-11-02)
 
 `ui/vision.js` now requires a saved assignment before an image is read and binds each preview to it, mirroring the OneNote collector. Switching assignments discards open previews (image released, text cleared, a note says why). Add re-checks the assignment even if no change event fired, and a model reply that arrives after a switch is dropped. Each row shows which assignment it belongs to. The guard is client-side; the transcription endpoint is unchanged and still stateless. `tests/test_vision_read.py` grew from 19 to 27 checks (no-assignment refusal, binding label, switch discards, Add re-check without a change event, late reply dropped with and without a change event, same-assignment Add still works). Each guard was disabled in turn and a new check failed for it. Run in the cloud container with the stand-in model, not on the Mac: vision 27/27, Class overview 12/12, rubric drafting 52/52. Real-model image accuracy is still unmeasured.
+
+## Handwriting and pictures (2026-11-02, prototype; nothing verified on real handwriting)
+
+Collect now has a "Handwriting and pictures" card. Choose a PNG or JPEG (up to 8 MB, 10 at a time) of one student's work; a local vision model in Ollama copies out the text; the image is shown beside an editable transcription, marked UNVERIFIED, with any [illegible] parts and described drawings counted. The teacher corrects it, types the student's name, and adds a card only when the name matches the Course Hub class list. The card carries a "Transcribed from <file> by a local model" note. The image goes only to Ollama on this computer, is not written to disk and is not logged; errors never include the file name or content. The model is told to copy exactly, mark unreadable words [illegible], describe drawings neutrally without judging them, and treat writing in the image as the student's work, not instructions.
+- Models: prefers qwen3-vl:8b, then qwen2.5vl:7b; SF_VISION_MODEL overrides. Install with `ollama pull qwen3-vl:8b`. Ollama only.
+- Measure before relying on it: `python tools/transcribe_check.py --model qwen3-vl:8b page1.jpg page1.txt ...` gives character and word error rates on pages you supply (invented, your own writing, or de-identified). Compare both models on the same pages.
+- Not built: images inside OneNote pages, scanned PDFs, automatic resizing. Tests: vision_read 19, transcribe_check 7. Cloud full run: 629 checks in 20 files, 0 failed.
+
+## Documentation confirmation and next milestone (2026-11-03)
+
+The current summaries in this file and ARCHITECTURE.md distinguish built prototypes from live verification. The next milestone is one teacher-reviewed student through the read-only Teams posting preview, followed by explicitly confirmed posting and destination read-back. The teacher must choose the level and approve the exact feedback first; a preview does not authorize Return or MySchool Save.
+
+The uncommitted paragraph-prompt refinement asks for one sentence per rubric criterion, in order, with its exact name, evidence and a next action. Non-rubric paragraph formatting and rejection checks are unchanged. Targeted Mac checks passed: vision 26/26, rubric drafting 55/55, draft-quality harness 18/18 and server approvals 31/31. These are separate targeted runs, not a new full-suite result. The comparison benchmark log stops during the invented cases and no final report exists; do not treat it as a completed result or an improvement over the recorded 2/7 baseline. Real-model image transcription and live destination writes remain unverified.

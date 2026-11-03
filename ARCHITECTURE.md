@@ -34,7 +34,7 @@ Mandatory review remains in place. Bulk automated posting stays disabled. Qualit
 
 **Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
 
-**Next:** improve criterion coverage using the unchanged-model benchmark as a baseline; test the Teams read-only posting preview on a teacher-approved student; then conduct a controlled live posting/save trial. Three-run model consistency, broader collection and real image transcription remain open.
+**Next milestone:** complete one student end to end: collect work, draft feedback, teacher edits and selects the level, teacher approves, read-only Teams posting preview, then an explicitly confirmed Teams Return and MySchool save with read-back. No live posting or save is verified yet. In parallel, evaluate the criterion-by-criterion prompt refinement against the 2/7 baseline; no completed comparison result is available. Three-run model consistency, broader collection and real image transcription remain open.
 
 ## MySchool pilot addition (2026-11-01)
 
