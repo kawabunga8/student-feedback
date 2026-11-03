@@ -229,12 +229,26 @@
     }
     if(!stale && note) note.remove();
   }
+  // The MySchool comment defaults to the student's feedback (it can be edited on its own). While it still equals what the
+  // app put there, it follows later edits to the feedback; once the teacher types in it, it stays theirs.
+  function syncMsComment(c) {
+    const box = c.querySelector('.myschool-comment'), out = c.querySelector('.out:not(.err)');
+    if(!box || !out) return;
+    const fb = out.innerText.trim();
+    if(box.value === '' && fb) { box.value = fb; c.dataset.msAuto = '1'; c.dataset.msLast = fb; return; }   // a comment is required: an empty one is filled
+    if(c.dataset.msAuto === undefined) { c.dataset.msAuto = (box.value === '' || box.value === fb) ? '1' : '0'; c.dataset.msLast = box.value; }
+    if(c.dataset.msAuto !== '1' || !fb) return;
+    if(box.value !== c.dataset.msLast) { c.dataset.msAuto = '0'; return; }          // edited since the app last set it
+    if(box.value !== fb) { box.value = fb; c.dataset.msLast = fb; }
+  }
   function refresh() {
     cards().forEach(c => {
       flagOutdated(c);
       if(!c.querySelector('.review-controls')) {
         const box = make('div','review-controls'); const label = make('label','','MySchool comment (review separately)');
         const comment = make('textarea','myschool-comment'); label.append(comment);
+        // Typing here ends the default: from then on the MySchool comment is the teacher's own text.
+        comment.addEventListener('input', () => { if(comment.value !== c.dataset.msLast) c.dataset.msAuto = '0'; });
         const approve = make('button','review-toggle','Mark reviewed'); approve.type = 'button';
         const note = make('span','review-state');
         approve.onclick = () => {
@@ -246,6 +260,7 @@
         };
         box.append(label,approve,note); c.append(box);
       }
+      syncMsComment(c);
       const a = approvals.get(c), ok = valid(c);
       c.querySelector('.review-toggle').textContent = ok ? 'Unreview' : 'Mark reviewed';
       if(a) c.querySelector('.review-state').textContent = ok ? 'Reviewed · edits require review again' : 'Changed · review again';
