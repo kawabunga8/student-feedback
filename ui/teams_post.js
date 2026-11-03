@@ -57,7 +57,7 @@
       const d=await post(body);if(d.error)throw Error(d.error);const out=await follow(d.job,owner,token);if(!out||owner!==aid()||token!==generation)return;
       if(op==='inspect'){preview={...out,jobId:d.job.id};box.replaceChildren(el('h4','Review the exact change'),el('p',out.class+' → '+out.title+' → '+out.target_name),el('p','Existing feedback: '+(out.existing||'(empty)')),el('p','Approved feedback:'));
         const full=el('div',out.feedback);full.style.whiteSpace='pre-wrap';box.append(full);message.textContent='Preview only. Posting replaces the existing feedback and Returns this student’s work. This preview expires in 10 minutes.';
-      }else{invalidate();message.textContent=out.verified?'Verified: feedback matches and the student appears in Returned. Check Teams, then record the Teams completion tick.':'Outcome uncertain. Check Teams before retrying.';}
+      }else{if(out.verified)window.feedbackWorkspace?.markPosted?.(student.value,'teams');invalidate();message.textContent=out.verified?'Verified: feedback matches and the student appears in Returned. Marked as posted.':'Outcome uncertain. Check Teams before retrying.';}
     }catch(e){if(owner===aid()&&token===generation){invalidate();message.textContent=e.message;
       if(/student was not found|roster name/i.test(e.message)){nameRow.style.display='';nameNote.textContent='Couldn’t find “'+name.value+'” in Teams. Type the name exactly as the Teams roster shows it (usually Last, First), then preview again.';}}}
     finally{if(owner===aid()&&token===generation){busy=false;student.disabled=false;name.disabled=false;inspect.disabled=false;save.disabled=!preview||!confirm.checked||!current(preview.student_id);}}
@@ -83,6 +83,7 @@
   const table=el('div');table.className='teams-bulk-rows';dlg.append(table);
   const refresh=el('button','Reload reviewed students');refresh.type='button';dlg.append(refresh);
   const previewAll=el('button','Read Teams for all');previewAll.type='button';previewAll.disabled=true;dlg.append(previewAll);
+  const redo=el('input');redo.type='checkbox';const redoLabel=el('label');redoLabel.append(redo,document.createTextNode(' Also redo students already posted or Returned in Teams'));redoLabel.style.display='block';dlg.append(redoLabel);
   const confirm=el('input');confirm.type='checkbox';const confirmText=el('span');const confirmLabel=el('label');confirmLabel.append(confirm,confirmText);dlg.append(confirmLabel);
   const save=el('button','Post feedback and Return for all previewed students');save.type='button';save.disabled=true;dlg.append(save);
   const stop=el('button','Stop after current student');stop.type='button';stop.disabled=true;dlg.append(stop);
@@ -91,12 +92,16 @@
   const current=sid=>window.feedbackWorkspace?.cards().some(c=>window.feedbackWorkspace.payload(c).student_id===sid&&window.feedbackWorkspace.valid(c));
   const defaultName=sid=>{const r=(typeof ROSTER!=='undefined'?ROSTER:[]).find(x=>x.id===sid);return r?r.last+', '+r.first:'';};
   const ready=()=>rows.filter(r=>r.state==='previewed'&&r.preview);
+  // Already posted by this app (and unchanged), or Returned according to the last Teams status read.
+  function alreadyDone(sid){const ws=window.feedbackWorkspace;const c=ws?.cards().find(x=>ws.payload(x).student_id===sid);if(!c)return '';
+    const t=(ws.posted.get(c)||{}).teams;if(t&&t.bound===JSON.stringify(ws.payload(c)))return 'posted';return c.dataset.tstatus==='Returned'?'Returned in Teams':'';}
+  redo.onchange=()=>{rows.forEach(r=>{if(r.state==='skipped')r.state='';});confirm.checked=false;draw();};
   function draw(){
     table.replaceChildren();
     rows.forEach(r=>{
       const line=el('div');line.style.margin='6px 0';
       r.nameInput.disabled=busy||r.state==='posted';
-      const status=el('span',r.state==='posted'?'✓ posted and Returned (verified)':r.state==='previewed'?'ready: Teams found “'+r.preview.target_name+'”'+(r.preview.existing?' · existing feedback will be replaced':''):r.error?'⚠ '+r.error:r.state==='working'?'working…':'not read yet');
+      const status=el('span',r.state==='skipped'?'already '+r.already+': skipped (tick “Also redo…” to include)':r.state==='posted'?'✓ posted and Returned (verified)':r.state==='previewed'?'ready: Teams found “'+r.preview.target_name+'”'+(r.preview.existing?' · existing feedback will be replaced':''):r.error?'⚠ '+r.error:r.state==='working'?'working…':'not read yet');
       line.append(el('strong',r.name+'  '),r.nameInput,el('br'),status);table.append(line);
     });
     const n=ready().length;
@@ -123,7 +128,7 @@
       if(owner!==aid()||token!==generation)return;
       rows=(d.students||[]).map(s=>{const nameInput=el('input');nameInput.value=defaultName(s.student_id);nameInput.placeholder='Last, First — as the Teams roster shows it';nameInput.setAttribute('aria-label','Teams roster name for '+s.name);
         nameInput.onchange=()=>{const r=rows.find(x=>x.nameInput===nameInput);if(r&&r.state!=='posted'){r.state='';r.preview=null;r.error='';confirm.checked=false;draw();}};
-        return {id:s.student_id,name:s.name,nameInput,state:'',preview:null,error:''};});
+        return {id:s.student_id,name:s.name,nameInput,state:'',preview:null,error:'',already:alreadyDone(s.student_id)};});
       message.textContent=rows.length?rows.length+' reviewed students. Names are filled from Course Hub; correct one only if Teams spells it differently.':'No current saved approvals. Review each student first.';
       draw();
     }catch(e){if(owner===aid()&&token===generation)message.textContent=e.message;}
@@ -133,6 +138,7 @@
     try{await flush();
       for(const r of rows){
         if(halt||owner!==aid()||token!==generation)break;if(r.state==='posted')continue;
+        if(r.already&&!redo.checked){r.state='skipped';r.error='';draw();continue;}
         if(!r.nameInput.value.trim()){r.error='Type the name exactly as Teams shows it.';draw();continue;}
         r.state='working';r.error='';r.preview=null;draw();
         try{if(!current(r.id))throw Error('No longer reviewed. Review and save again.');
@@ -164,14 +170,14 @@
           const d=await post({type:'teams_post',op:'save',assignment:owner,preview_id:p.jobId,confirm:true});if(d.error)throw Error(d.error);
           const out=await follow(d.job,owner,token);
           if(!out.verified)throw Error('The outcome is uncertain. Check Teams before trying again.');
-          r.state='posted';done.push(r.name);
+          r.state='posted';done.push(r.name);window.feedbackWorkspace?.markPosted?.(r.id,'teams');   // the same tick the teacher would add by hand
         }catch(e){r.state='';r.preview=null;r.error=e.message;problem=r.name+': '+e.message;draw();break;}   // a Return may have run: read Teams again
         draw();
       }
     }catch(e){problem=e.message;}
     finally{busy=false;confirm.checked=false;draw();}
     const left=todo.filter(r=>r.state!=='posted').map(r=>r.name);
-    message.textContent=(done.length?'Posted and Returned (verified): '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done. Record each student’s Teams completion tick after checking.');
+    message.textContent=(done.length?'Posted and Returned (verified): '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done: each is marked as posted.');
   }
   refresh.onclick=load;previewAll.onclick=readAll;save.onclick=postAll;stop.onclick=()=>{halt=true;message.textContent='Stopping after the current student…';};
   // One entry point for the whole class: open, load the reviewed students and read Teams for all of them at once (read-only).

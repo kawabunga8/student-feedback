@@ -35,3 +35,15 @@ label,.d-label{font-size:12px;font-weight:650;margin-bottom:7px;color:var(--ink)
 /* Unpublished Teams draft: keep the full instructions readable inside the review dialog. */
 .teams-dialog pre.teams-text-full { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 42vh; overflow: auto; padding: 1rem; border: 1px solid var(--line, #496052); border-radius: 8px; }
 .teams-dialog [role="status"] { overflow-wrap: anywhere; }
+
+/* Posting: one line per student with a status chip; the copy-and-tick list is folded away as a fallback. */
+.posting-summary{margin:6px 0 12px;font-size:14px;font-weight:600;color:var(--ink)}
+.posting-actions{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.posting-table{width:100%;border-collapse:collapse;font-size:14px;margin:4px 0 16px}
+.posting-table th{text-align:left;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--mute);font-weight:650;padding:8px 10px;border-bottom:1px solid var(--line)}
+.posting-table td{padding:7px 10px;border-bottom:1px solid var(--line)}
+.posting-table td.posting-lvl{color:var(--mute);white-space:nowrap}
+.chip{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:650;background:var(--soft);color:var(--mute);white-space:nowrap}
+.chip.good{background:#d7eadc;color:#1d5a3b}.chip.soft{background:#e3efe6;color:#35684d}.chip.ready{background:#dfe9f5;color:#24476f}.chip.warn{background:#f6e4d6;color:#8a4417}.chip.muted{background:var(--soft);color:var(--mute)}
+@media(prefers-color-scheme:dark){.chip.good{background:#27493a;color:#aee0c3}.chip.soft{background:#2b4637;color:#a3d2b7}.chip.ready{background:#26405c;color:#b4d1f0}.chip.warn{background:#573721;color:#f1c7a3}}
+.posting-manual{margin-top:8px}.posting-manual>summary{cursor:pointer;font-size:13px;color:var(--mute);padding:6px 0}

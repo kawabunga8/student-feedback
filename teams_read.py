@@ -179,12 +179,32 @@ def parse_roster_students(text):
     if len(body) % 3:
         return {"complete": False, "students": [], "why": "the roster rows don't come in groups of three lines"}
     rows = [{"name": body[k + 1], "status": body[k + 2]} for k in range(0, len(body), 3)]
+    if found is None and len(rows) in tab_counts(text):     # newer Teams: no 'results found' line, the tab labels carry the counts
+        found = len(rows)
     if found is None or len(rows) != found:
         return {"complete": False, "students": [], "why": f"{len(rows)} rows were read but the page says {found} results"}
     names = [r["name"].lower() for r in rows]
     if len(set(names)) != len(names):
         return {"complete": False, "students": [], "why": "two students have the same name on the roster"}
     return {"complete": True, "students": rows, "why": ""}
+
+
+def tab_counts(text):
+    """The counts Teams prints on the roster's tabs ('To return (26)', 'Returned (2)')."""
+    return [int(m.group(1)) for l in (text or "").splitlines() for m in [re.match(r"^(?:To return|Returned) \((\d+)\)$", l.strip())] if m]
+
+
+def roster_ready(text):
+    """The roster has loaded: it prints either 'N results found' or the tab counts."""
+    return bool(re.search(r"\d+ results? found", text or "")) or bool(tab_counts(text))
+
+
+def with_returned(roster_students, returned_rows):
+    """Add the Returned tab's students to the 'To return' ones (each name once) when that tab was read completely."""
+    if not roster_students.get("complete") or not returned_rows:
+        return roster_students
+    have = {r["name"].lower() for r in roster_students["students"]}
+    return {**roster_students, "students": roster_students["students"] + [r for r in returned_rows if r["name"].lower() not in have]}
 
 
 SECTION = ("Instructions", "Reference materials", "My work", "Points")
@@ -403,6 +423,26 @@ class Session:
             self.page.wait_for_timeout(300)
         self.page.wait_for_timeout(1200)         # let the rows for that tab render
 
+    def read_returned_tab(self):
+        """Students already Returned sit on their own roster tab, not under 'To return'. Read that tab too (read-only) and
+        go back. Returns the rows, or None when the tab can't be read completely (the caller then keeps what it has)."""
+        f = self.frame()
+        tab = f.get_by_role("tab", name=re.compile(r"Returned", re.I)) if f else None
+        if tab is None or tab.count() != 1:
+            return None
+        self.click("list-tab", tab)
+        end = time.time() + 12
+        while time.time() < end and not parse_roster_students(self.text())["complete"]:
+            self.page.wait_for_timeout(500)
+        parsed = parse_roster_students(self.text())
+        try:
+            back = self.frame().get_by_role("tab", name=re.compile(r"To return", re.I))
+            if back.count() == 1:
+                self.click("list-tab", back)
+        except Exception:
+            pass
+        return parsed["students"] if parsed["complete"] else None
+
     def list_items(self):
         """Every assignment Teams lists across its tabs, once each, tagged with the tab it was found on. Teams' first tab
         (Upcoming) hides anything already due, so past-due and returned work is read from its own tabs."""
@@ -443,7 +483,7 @@ class Session:
                     raise ReadError("differs", "The assignment was in the list text but its row couldn't be found to open.")
                 self.page.wait_for_timeout(1500); continue
             self.click("list-row", hit.get_by_text(want["title"], exact=True).first)
-            t = self.wait_for("roster", lambda t: want["title"] in t and bool(re.search(r"\d+ results? found", t)))
+            t = self.wait_for("roster", lambda t: want["title"] in t and roster_ready(t))
             # The text can appear before the frame's address settles (the list page's text may still be on screen), so
             # wait on the address too, then re-read the text so counts come from the settled page.
             end = time.time() + (15 if attempt == 1 else 20)
@@ -458,8 +498,11 @@ class Session:
         if not ids["assignment_id"] or not is_review_url(url):
             raise ReadError("differs", "The roster page's address isn't the expected assignment-review address (shape seen: " +
                             url_shape(url) + ").", {"log": self.log})
+        end = time.time() + 15                    # the rows load after the tab counts do: wait until they add up
+        while time.time() < end and not parse_roster_students(self.text())["complete"]:
+            self.page.wait_for_timeout(500)
         t2 = self.text()
-        return want, (t2 if want["title"] in t2 and re.search(r"\d+ results? found", t2) else t), ids
+        return want, (t2 if want["title"] in t2 and roster_ready(t2) else t), ids
 
     def student_view(self, title):
         f = self.frame()
@@ -594,6 +637,7 @@ def run(op, cls="", title="", wait=120, signin_wait=240, students=False):
                         "assignments": items, "log": s.log}
             want, roster_text, ids = s.open_one(cls, title)
             roster = parse_roster(roster_text)
+            returned_rows = s.read_returned_tab() if students else None
             roster_url = re.sub(r"[?#].*", "", s.frame().url)
             sv_text = s.student_view(want["title"])
             sv = apply_rubric_probe(parse_student_view(sv_text), getattr(s, "rubric_probe", None))
@@ -613,7 +657,7 @@ def run(op, cls="", title="", wait=120, signin_wait=240, students=False):
                     "source": {**ids, "url": roster_url, "student_view_url": re.sub(r"[?#].*", "", s.frame().url),
                                "teams_class": want["class_name"], "list_title": want["title"], "read_at": now},
                     "list_row": want, "student_view": sv, "roster_counts": roster, "log": s.log,
-                    **({"roster_students": parse_roster_students(roster_text)} if students else {})}
+                    **({"roster_students": with_returned(parse_roster_students(roster_text), returned_rows)} if students else {})}
         finally:
             ctx.close()
 

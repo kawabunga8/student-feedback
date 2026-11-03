@@ -58,7 +58,16 @@
   const keep = {get:k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
   const linkKey = kind => 'posting-link:' + kind + ':' + (document.getElementById('atitle').value.trim() || 'default');
   const posting = make('div','card posting'); delivery.append(posting);
-  posting.append(make('h3','','Assisted posting'), make('p','hint','Only reviewed students appear here. For each one: copy, switch to Teams or MySchool, paste, and click Return or save there yourself. Tick a box only after you have checked it in that system.'));
+  posting.append(make('h3','','Post feedback'), make('p','hint','Post to all sends each reviewed student\u2019s approved feedback to Teams one at a time. It reads Teams first and asks you to confirm once. Statuses below update by themselves.'));
+  const postSummary = make('p','posting-summary'); postSummary.setAttribute('role','status'); posting.append(postSummary);
+  const postActions = make('div','posting-actions'); posting.append(postActions);
+  const bPostTeams = make('button','primary','Post to all (Teams)'); bPostTeams.type = 'button'; bPostTeams.onclick = () => { if(window.postToAll) window.postToAll(); };
+  const bCheck = make('button','','Check Teams'); bCheck.type = 'button'; bCheck.title = 'Read who is already Returned in Teams (read-only).';
+  bCheck.onclick = () => { const b = document.getElementById('teams-status-read'); if(b) b.click(); else postSummary.textContent = 'Open or save an assignment first.'; };
+  const bPostMs = make('button','','Post to all (MySchool)'); bPostMs.type = 'button'; bPostMs.hidden = true; bPostMs.onclick = () => { if(window.postToAllMySchool) window.postToAllMySchool(); };
+  postActions.append(bPostTeams, bCheck, bPostMs);
+  const postTable = make('table','posting-table'); posting.append(postTable);
+  const manual = make('details','posting-manual'); manual.append(make('summary','','Do it by hand (copy and tick)')); posting.append(manual);
   const links = make('div','posting-links'); posting.append(links);
   const linkInputs = {};
   for(const [kind, label, help] of [
@@ -76,7 +85,7 @@
   const postTools = make('div','posting-tools'); posting.append(postTools);
   for(const kind of ['teams','myschool']) { const b = make('button','','Open ' + NAMES[kind]); b.type = 'button'; b.onclick = () => openSystem(kind); postTools.append(b); }
   const postProgress = make('span','posting-progress'); postTools.append(postProgress);
-  const postList = make('div','posting-list'); posting.append(postList);
+  const postList = make('div','posting-list'); manual.append(links, postTools, postList);   // the copy-and-tick list is the fallback, kept out of the way
   const posted = new WeakMap();   // card -> {teams:{bound, at}, myschool:{bound, at}}
   const rows = new WeakMap();
   const surname = n => { n = (n || '').trim(); return (n.includes(',') ? n.split(',')[0] : n.split(/\s+/).pop() || '').toLowerCase(); };
@@ -134,6 +143,43 @@
     }
     const reviewed = cards().filter(valid).length;
     postProgress.textContent = reviewed ? `Teams ${doneT} of ${reviewed}   ·   MySchool ${doneM} of ${reviewed}` : '';
+    renderPostTable();
+  }
+  // The at-a-glance view: one line per student with where their feedback stands in Teams (and MySchool when there is a comment).
+  const hhmm = at => new Date(at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  function teamsChip(c) {
+    const s = postState(c, 'teams');
+    if(!valid(c)) return ['Not reviewed', 'muted'];
+    if(s.done && !s.stale) return ['Posted ' + hhmm(s.at), 'good'];
+    if(s.stale) return ['Changed after posting', 'warn'];
+    if(c.dataset.tstatus === 'Returned') return ['Returned in Teams', 'soft'];
+    return ['Ready to post', 'ready'];
+  }
+  function msChip(c) {
+    const s = postState(c, 'myschool'), p = payload(c);
+    if(!valid(c)) return ['Not reviewed', 'muted'];
+    if(s.done && !s.stale) return ['Saved ' + hhmm(s.at), 'good'];
+    if(s.stale) return ['Changed after saving', 'warn'];
+    if(!p.myschool_comment.trim()) return ['No comment yet', 'muted'];
+    return [p.level ? 'Ready to save' : 'Needs a level', p.level ? 'ready' : 'warn'];
+  }
+  let tableSig = '';
+  function renderPostTable() {
+    const all = cards().filter(c => c.querySelector('.work').value.trim()).sort((a,b) => surname(payload(a).name).localeCompare(surname(payload(b).name)));
+    const showMs = all.some(c => valid(c) && payload(c).myschool_comment.trim());
+    const data = all.map(c => ({name:payload(c).name || 'Unnamed student', level:payload(c).level, t:teamsChip(c), m:msChip(c), ts:c.dataset.tstatus || ''}));
+    const sig = JSON.stringify([showMs, data]);
+    if(sig === tableSig) return; tableSig = sig;
+    const n = data.length, count = (arr, f) => arr.filter(f).length;
+    const done = count(data, d => d.t[1] === 'good' || d.t[1] === 'soft'), ready = count(data, d => d.t[1] === 'ready'), waiting = count(data, d => d.t[1] === 'muted'), changed = count(data, d => d.t[1] === 'warn');
+    postSummary.textContent = n ? 'Teams: ' + done + ' of ' + n + ' done · ' + ready + ' ready to post' + (waiting ? ' · ' + waiting + ' not reviewed' : '') + (changed ? ' · ' + changed + ' changed since posting' : '') +
+      (showMs ? ' · MySchool: ' + count(data, d => d.m[1] === 'good') + ' of ' + n + ' saved' : '') : 'No students yet. Load an Assessment folder first.';
+    bPostTeams.disabled = !ready && !changed; bPostMs.hidden = !showMs;
+    const th = (t) => { const e = make('th','',t); e.scope = 'col'; return e; };
+    const head = make('tr'); head.append(th('Student'), th('Level'), th('Teams')); if(showMs) head.append(th('MySchool'));
+    const chip = ([t, k]) => { const td = make('td'); td.append(make('span','chip ' + k, t)); return td; };
+    const body = data.map(d => { const tr = make('tr'); tr.append(make('td','', d.name), make('td','posting-lvl', d.level ? d.level + (levelCode(d.level) ? ' (' + levelCode(d.level) + ')' : '') : '—'), chip(d.t)); if(showMs) tr.append(chip(d.m)); return tr; });
+    postTable.replaceChildren(make('thead','')); postTable.firstChild.append(head); const tb = make('tbody',''); tb.append(...body); postTable.append(tb);
   }
   function postingSummary(c) {
     const out = {};
@@ -243,6 +289,9 @@
   const notice = make('p','hint','Student work and review marks stay in this page until you export. Reloading loses them.'); review.prepend(notice);
   window.addEventListener('beforeunload',e=>{ if(cards().some(c=>c.querySelector('.work').value.trim())) { e.preventDefault(); e.returnValue=''; } });
   // Lets the session saver (assignment.js) read and restore this page's state.
-  window.feedbackWorkspace = {cards, payload, valid, approvals, posted, draftBasis, basisNow, refresh};
+  // A verified post records the same "done" tick the teacher would tick by hand: bound to the exact reviewed values.
+  const markPosted = (sid, kind) => { const c = cards().find(x => payload(x).student_id === sid); if(!c || !valid(c)) return false;
+    const t = posted.get(c) || {}; t[kind] = {bound:JSON.stringify(payload(c)), at:new Date().toISOString()}; posted.set(c, t); refresh(); return true; };
+  window.feedbackWorkspace = {cards, payload, valid, approvals, posted, draftBasis, basisNow, refresh, markPosted};
   setInterval(refresh,1000); select(1); refresh();
 })();

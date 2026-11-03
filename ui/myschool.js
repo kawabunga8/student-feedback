@@ -71,7 +71,7 @@
         previewBox.append(el('h4','Review the exact change'),el('p',out.course+' → '+out.title+' → '+out.target_name),el('p',(out.criteria||[]).length>1?'Levels to save, by criterion (check each against MySchool):':'Level to save:'),...(out.criteria||[]).map((c,i)=>el('p',(i+1)+'. '+(c.label||'(no label found)')+': '+(c.existing||'ungraded')+' → '+c.chosen)),el('p','Approved comment: '+out.comment),el('p','Existing comment: '+(out.existing.comment||'(empty)')),el('p',out.mark_graded?'Status will be set to Graded.':'Status will be preserved.'),el('p',out.publication==='0'?'Assignment is unpublished. It will stay unpublished.':'Assignment is published: saved values may be visible immediately under its existing settings. Publication will not be changed.'));
         message.textContent='Preview only: nothing changed in MySchool. This preview expires after 10 minutes.';
       } else {
-        invalidate();message.textContent=out.verified?'Verified by reopening MySchool: the approved level and comment match. Publication setting preserved. Record the MySchool completion tick after checking.':'Save outcome is uncertain. Check MySchool before trying again.';
+        if(out.verified)window.feedbackWorkspace?.markPosted?.(student.value,'myschool');invalidate();message.textContent=out.verified?'Verified by reopening MySchool: the approved level and comment match. Publication setting preserved. Marked as saved.':'Save outcome is uncertain. Check MySchool before trying again.';
       }
     } catch(e) {if(owner===aid()&&token===generation)message.textContent=e.message;}
     finally {if(owner===aid()&&token===generation){busy=false;inspect.disabled=false;save.disabled=!preview||!confirm.checked||!localCurrent(preview.student_id);}}
@@ -199,7 +199,7 @@
           const d=await post({type:'myschool',op:'save',assignment:owner,preview_id:p.jobId,confirm:true});if(d.error)throw Error(d.error);
           const out=await follow(d.job,owner,token);
           if(!out.verified)throw Error('Save outcome is uncertain. Check MySchool before trying again.');
-          r.state='saved';done.push(r.name);
+          r.state='saved';done.push(r.name);window.feedbackWorkspace?.markPosted?.(r.id,'myschool');
         }catch(e){r.state='';r.preview=null;r.error=e.message;problem=r.name+': '+e.message;draw();break;}   // a Save may have used this preview: read MySchool again
         draw();
       }
@@ -209,7 +209,7 @@
     message.textContent=(done.length?'Saved and verified: '+done.join(', ')+'. ':'Nothing was saved. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not saved: '+left.join(', ')+'. Check MySchool for any student that shows a problem, then preview again.':'All done. Record each student’s MySchool completion tick after checking.');
   }
   refresh.onclick=load;previewAll.onclick=previewEveryone;save.onclick=saveEveryone;stop.onclick=()=>{halt=true;message.textContent='Stopping after the current student…';};
-  launch.onclick=()=>{dlg.showModal();load();};
+  launch.onclick=()=>{dlg.showModal();load();};window.postToAllMySchool=launch.onclick;
   $('#asg-pick')?.addEventListener('change',()=>{generation++;busy=false;halt=true;rows=[];draw();message.textContent='Assignment changed. Reopen this dialog.';});
   draw();
 })();
