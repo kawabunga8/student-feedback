@@ -127,9 +127,11 @@ def tab_names(page, s, name):
     return None
 
 
-def saved_feedback(page, f, name):
+def saved_feedback(page, f, name, req, submission_id):
     """Read-only: open this Returned student's panel from the Returned tab and read the feedback Teams actually kept.
-    Returns the text, or None if the panel could not be read. Leaves the roster on To return."""
+    The text only counts when the panel is proven to be this student's: the address names this assignment and this student's
+    submission, and the panel shows this student as the selected one. Returns the text, or None if that could not be shown.
+    Leaves the roster on To return."""
     try:
         show_tab(f, page, 'Returned')
         if not on_tab(f, name, 15000):
@@ -142,11 +144,16 @@ def saved_feedback(page, f, name):
             cell.dispatch_event('click')
         anchor = f.locator('#editorAnchor')
         anchor.wait_for(state='attached', timeout=20000)
-        box = f.get_by_role('textbox', name='Feedback', exact=True)
+        panel_f = s_frame(page, f)
+        if T.ids_from_url(panel_f.url) != req['source'] or '/submissions/' + submission_id not in urlsplit(panel_f.url).path:
+            raise PilotError('The opened panel is not this submission.')
+        if panel_f.get_by_role('button', name='Currently selected student: ' + display_name(name), exact=True).count() != 1:
+            raise PilotError('The opened panel does not show this student.')
+        box = panel_f.get_by_role('textbox', name='Feedback', exact=True)
         if box.count() != 1:
             raise PilotError('Feedback box not found.')
         text = box.inner_text()
-        close_panel(page, f)
+        close_panel(page, panel_f)
         return text
     except Exception:
         return None
@@ -208,7 +215,7 @@ def one_student(page, f, req, st, mode, ask, known):
     if not done:
         raise PilotError('Return may have run, but the roster does not list this student under Returned. Check Teams before trying again.')
     # Two different checks: the editor was verified before Return (what was entered); now what Teams KEPT is read back.
-    kept = saved_feedback(page, s_frame(page, f), st['target_name']) or saved_feedback(page, s_frame(page, f), st['target_name'])
+    kept = saved_feedback(page, s_frame(page, f), st['target_name'], req, submission_id) or saved_feedback(page, s_frame(page, f), st['target_name'], req, submission_id)
     if kept is None:
         raise PilotError('Returned, but the feedback Teams saved could not be read back to confirm it. Check this student in Teams before trying again.')
     if ' '.join(kept.split()) != ' '.join(st['feedback'].split()):

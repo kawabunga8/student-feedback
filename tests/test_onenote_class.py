@@ -32,6 +32,55 @@ check("A4 an address without a notebook id is refused", got == "differs", got)
 check("A5 'Define & Ideate' counts as the title 'define and ideate'", C.norm_tokens("Define & Ideate") == C.norm_tokens("define and ideate"))
 check("  a different page does not", C.norm_tokens("canva") != C.norm_tokens("Define and ideate"))
 
+# ---- A6: whose page really opened (the address OneNote rewrites to once it has opened a page)
+RES = "https://rcs.sharepoint.com/sites/cn/_layouts/15/Doc.aspx?sourcedoc=%7Babc-123%7D&wd=target%28{}%29"
+def resolved(student, page="Task%203"): return RES.format(student + "%2FHomework.one%7Cs1%2F" + page + "%7Cp1%2F")
+check("A6 an opened page reports its student, section and page", C.resolved_identity(resolved("Alex%20Example")) == {"student": "Alex Example", "section": "Homework", "page": "Task 3"})
+check("  the address as asked for (no ids yet) proves nothing", C.resolved_identity(C.page_url(BASE, "Alex Example", "Homework", "Task 3")) is None)
+check("  a notebook-level fallback page (Welcome) has no student", C.resolved_identity(RES.format("Welcome.one%7Cw1%2FWelcome%7Cw2%2F")) is None)
+
+class FakePage:
+    """OneNote as the automated browser sees it. A student with no section silently gets the previous student's page."""
+    def __init__(self, sections, fallback_last=True): self.url = "https://rcs.sharepoint.com/"; self.sections = sections; self.last = None; self.fallback_last = fallback_last
+    def goto(self, url, wait_until=None):
+        who = urllib.parse.unquote(url.split("wd=target(")[1].split("/")[0])
+        self.last = who if who in self.sections else (self.last if self.fallback_last else None)
+        self.url = resolved(urllib.parse.quote(self.last, safe="")) if self.last else RES.format("Welcome.one%7Cw1%2FWelcome%7Cw2%2F")
+    def wait_for_timeout(self, ms): pass
+class FakeCtx:
+    def __init__(self, page): self.pages = [page]
+    def close(self): pass
+class FakeLock:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+import types, urllib.parse
+def run_fake(page, students):
+    fake_api = types.ModuleType("playwright.sync_api")
+    class _P:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    fake_api.sync_playwright = lambda: _P()
+    saved = (sys.modules.get("playwright"), sys.modules.get("playwright.sync_api"), T.BrowserLock, T._launch, C.O.read_loaded)
+    sys.modules["playwright"] = types.ModuleType("playwright"); sys.modules["playwright.sync_api"] = fake_api
+    T.BrowserLock = FakeLock; T._launch = lambda p: FakeCtx(page)
+    C.O.read_loaded = lambda pg, url, who, note, wait=60: {"page": {"text": "Task 3\nwork of " + str(pg.last), "chars": 20}, "source": {"student_hint": who["student_hint"]}}
+    got = {}
+    try:
+        C.run_class({"base": BASE, "titles": ["Task 3"], "sections": ["Homework"], "students": students}, lambda m: got.__setitem__(m["item"]["key"], m["item"]))
+    finally:
+        T.BrowserLock, T._launch, C.O.read_loaded = saved[2:]
+        for k, v in (("playwright", saved[0]), ("playwright.sync_api", saved[1])):
+            if v is None: sys.modules.pop(k, None)
+            else: sys.modules[k] = v
+    return got
+two = [{"key": "a", "name": "Alex Example"}, {"key": "b", "name": "Blair Example"}]
+got = run_fake(FakePage({"Alex Example"}), two)
+check("A7 a student with no section is NOT given the previous student's page (title matches, student doesn't)", got["a"]["found"] and not got["b"]["found"], got)
+check("  and the wrong page is not tried again for every title", got["b"]["tried"] == 1, got["b"])
+check("  the found page names the student it really came from", got["a"]["page"]["source"]["student_hint"] == "Alex Example", got["a"])
+got = run_fake(FakePage({"Alex Example", "Blair Example"}), two)
+check("A8 two students who both have the page are both found", got["a"]["found"] and got["b"]["found"], got)
+
 # ---- B
 class Q:
     def __init__(self): self.items = {}; self.results = {}; self.queue = ["s1", "s2", "s3"]; self.cancel = False

@@ -41,6 +41,12 @@ def header_of(state):
             'read_at': time.time()}
 
 
+def criteria_identity(student):
+    """Which criteria a student's levels are being chosen for: each criterion's control id and label, in page order. A preview is
+    bound to this, so levels chosen for 'Design, Testing' are never applied if MySchool now lists 'Testing, Design'."""
+    return [[c.get('input', ''), c.get('label', '')] for c in student['criteria']]
+
+
 def preview_of(state, st, req):
     """One student's preview from the page already read (no further browsing)."""
     hits = match_student(state, st['wanted'])
@@ -56,7 +62,7 @@ def preview_of(state, st, req):
             'title': state['title'], 'course': state['course'], 'publication': state['publication'],
             'criteria': [{'label': c.get('label', ''), 'existing': code_of(c), 'chosen': k} for c, k in zip(student['criteria'], st['codes'])],
             'existing': {'levels': [code_of(c) for c in student['criteria']], 'comment': student['comment'], 'status': student['status']},
-            'existing_selected': [c['selected'] for c in student['criteria']],
+            'existing_selected': [c['selected'] for c in student['criteria']], 'criteria_identity': criteria_identity(student),
             'desired': desired, 'read_at': time.time()}
 
 
@@ -72,6 +78,8 @@ def save_one(page, req, st, ask):
     student, values = target_of(state, one)
     if student['id'] != pv['target_id']:
         raise PilotError('The destination student changed since the preview. Read MySchool again; nothing was saved.')
+    if criteria_identity(student) != pv.get('criteria_identity'):
+        raise PilotError('The criteria on the MySchool page changed (names or order) since the preview. Read MySchool again; nothing was saved.')
     desired = proposed(student, one, values)
     if desired != pv['desired']:
         raise PilotError('The values to save changed since the preview. Read MySchool again; nothing was saved.')

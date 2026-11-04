@@ -207,6 +207,10 @@ def parse_upload(filename, raw, mode):
 # Saved assignment records and the Teams class -> Course Hub mapping. Outside this repo, next to the automation
 # Chrome profile. They hold assignment details only, never student work.
 APP_DATA = Path.home() / "Library" / "Application Support" / "student-feedback"
+try:                                                # job journal, saved assignments and the Chrome sign-in live here: owner only
+    APP_DATA.mkdir(parents=True, exist_ok=True); APP_DATA.chmod(0o700)
+except OSError:
+    pass
 ASSIGNMENTS_DIR = APP_DATA / "assignments"
 CLASS_MAP = APP_DATA / "class-map.json"
 ASG_ID = re.compile(r"asg-[a-z0-9-]{6,48}")
@@ -1564,6 +1568,9 @@ def enqueue_draft_job(body):
     return QUEUE.enqueue("draft", aid, rel, request, items)
 
 
+NOT_RESUMABLE = ("myschool_", "teams_post_", "teams_batch_", "teams_create")   # job types that write somewhere else: never re-run from the old request
+
+
 def _job_view(job):
     return {k: job[k] for k in ("id", "type", "assignment", "state", "created", "started", "finished", "error", "total", "counts", "items", "drafts", "basis", "overwrite") if k in job}
 
@@ -2411,6 +2418,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return
+        origin = self.headers.get("Origin")        # every POST: JSON from this app's own page only (no cross-site form posts)
+        if not self.headers.get("Content-Type", "").startswith("application/json") or \
+                (origin and origin not in (f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}")):
+            return self._send(403, {"error": "forbidden"})
         if self.path == "/api/parse":
             p = {}
             try:
@@ -2473,7 +2484,7 @@ class Handler(BaseHTTPRequestHandler):
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:
                         raise ValueError("bad job id")
-                    if action == "resume" and QUEUE.get(jid)["type"].startswith(("myschool_", "teams_post_", "teams_create")):
+                    if action == "resume" and QUEUE.get(jid)["type"].startswith(NOT_RESUMABLE):
                         raise ValueError("Posting jobs are not resumed. Check the destination and create a fresh preview.")
                     if action == "cancel":
                         job = QUEUE.cancel(jid)
