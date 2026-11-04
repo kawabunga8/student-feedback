@@ -21,7 +21,7 @@
   const imports = make('div', 'card import-tools'); collect.append(imports);
   ['addall','files','filepick','split','assess'].forEach(id => imports.append(document.getElementById(id)));
   const notebook = make('div', 'card onenote-card');
-  notebook.innerHTML = '<h3>OneNote collection</h3><span class="badge">Prototype: one typed page at a time</span><p>Paste the address of one student\u2019s typed OneNote page and the app reads it, read-only. Whole-class collection, handwriting and pictures are not connected yet.</p><p>You can still use saved Assessment files or upload collected work above.</p>';
+  notebook.innerHTML = '<h3>OneNote collection</h3><span class="badge">Typed pages, read-only</span><p>Click <strong>Collect from OneNote\u2026</strong>, paste any page address from the class notebook, then choose <strong>Collect whole class</strong>: the app opens each student\u2019s Homework section, finds this assignment\u2019s page and reads it. You can also paste one student\u2019s page address. Handwriting and pictures are not read.</p><p>You can also use saved Assessment files or upload collected work above. \u201c+ Add whole class\u201d only adds the class list.</p>';
   collect.append(notebook);
   const review = panels[3];
   const toolbar = make('div', 'review-toolbar'); review.append(toolbar);
