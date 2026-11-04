@@ -113,6 +113,138 @@ def first_line(text):
     return next((l.strip() for l in (text or "").splitlines() if l.strip()), "")
 
 
+KINDS = {"task", "stage", "part", "step", "unit", "lab"}
+WORDS = {"1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten"}
+
+
+def step_number(titles):
+    """The 'N' of 'Task N: ...' from the first title, or ''."""
+    m = re.match(r"^\s*(?:%s)\s*(\d+)" % "|".join(sorted(KINDS)), titles[0] if titles else "", re.I)
+    return m.group(1) if m else ""
+
+
+def pick_page(pages, titles):
+    """Which of a student's listed pages is this assignment's. Returns (title, why_not).
+    First an exact match (words only, & = and) with any title in the list, in order; then, only if exactly one page fits, a page that
+    starts 'Task/Stage/Part N' or 'N.' (optionally after 'ICT'), as students name them differently. Two candidates are never
+    guessed between."""
+    for t in titles:
+        hits = [p for p in pages if norm_tokens(p) == norm_tokens(t)]
+        if len(hits) == 1:
+            return hits[0], ""
+        if len(hits) > 1:
+            return None, "more than one page has that title"
+    num = step_number(titles)
+    if num:
+        ok = {num, WORDS.get(num, "\0")}
+        def loose(p):
+            tk = norm_tokens(p)
+            if tk[:1] == ["ict"]:
+                tk = tk[1:]
+            return bool(tk) and ((tk[0] in KINDS and len(tk) > 1 and tk[1] in ok) or tk[0] in ok)
+        hits = [p for p in pages if loose(p)]
+        if len(hits) == 1:
+            return hits[0], ""
+        if len(hits) > 1:
+            return None, "more than one page could be it"
+    return None, "no page matches"
+
+
+def notebook_url(base):
+    """The notebook with no page chosen (opens at its first section), so no student's section starts expanded."""
+    sp = urllib.parse.urlsplit(O.read_only(base))
+    q = urllib.parse.parse_qs(sp.query)
+    if "sourcedoc" not in q:
+        raise T.ReadError("differs", "The notebook address has no notebook id (sourcedoc). Paste an address copied from the notebook.")
+    qs = urllib.parse.urlencode({"sourcedoc": q["sourcedoc"][0], "action": "view", "wdorigin": "NavigationUrl"}, safe="{}")
+    return urllib.parse.urlunsplit((sp.scheme, sp.netloc, sp.path, qs, ""))
+
+
+def _until(page, fn, secs):
+    end = time.time() + secs
+    while True:
+        v = fn()
+        if v:
+            return v
+        if time.time() >= end:
+            return None
+        page.wait_for_timeout(500)
+
+
+def _frame(page):
+    f, _ = O._onenote_frame(page)
+    return f
+
+
+def _name_re(name, suffix):
+    return re.compile(r"^" + r"\s+".join(re.escape(w) for w in name.split()) + suffix, re.I)
+
+
+def open_section(page, base, student, section, signin):
+    """Open one student's section the way a person does: notebook, student, section. Returns the frame, or None if the notebook
+    shows no such student or section (or it won't open). Proof that the right section opened is the address OneNote rewrites."""
+    page.goto(notebook_url(base), wait_until="domcontentloaded")
+    page.wait_for_timeout(1500)
+    signin(page, notebook_url(base))
+    f = _until(page, lambda: (lambda fr: fr if fr is not None and fr.get_by_role("treeitem").count() > 3 else None)(_frame(page)), 40)
+    if f is None:
+        return None
+    items = lambda: _frame(page).locator("[role=treeitem]")
+    labels = lambda: _frame(page).evaluate("() => [...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('aria-label') || '')")
+    is_group = lambda l: bool(re.search(r",\s*Section Group\b", l))
+    def group_at():
+        hits = [i for i, l in enumerate(labels()) if is_group(l) and _name_re(student, r",\s*Section Group").match(l)]
+        return hits[0] if len(hits) == 1 else None
+    def section_under(gi):
+        """Index of the section called `section` listed directly under the group at gi (other students' open groups don't count)."""
+        ls = labels()
+        for k in range(gi + 1, len(ls)):
+            if is_group(ls[k]):
+                return None
+            if _name_re(section, r",\s*Section\b").match(ls[k]):
+                return k
+        return None
+    gi = group_at()
+    if gi is None:
+        return None
+    if section_under(gi) is None and not (gi + 1 < len(labels()) and not is_group(labels()[gi + 1])):
+        items().nth(gi).click()                          # closed: open it (an open one would be shut by a click)
+    si = _until(page, lambda: section_under(group_at()) if group_at() is not None else None, 15)
+    if si is None:
+        return "nosection" if group_at() is not None else None      # the student is there but has no such section: nothing to guess
+    items().nth(si).click()
+    def opened():
+        ident = resolved_identity(page.url)
+        return ident and same_name(ident["student"], student) and same_name(ident["section"], section)
+    return _frame(page) if _until(page, opened, 20) else None
+
+
+PAGE_TITLES_JS = """() => [...document.querySelectorAll('#PageList .pageListItem')].map(e => ((e.innerText || '').trim().split('\\n')[0] || '').trim())"""
+
+
+def list_pages(page, f):
+    """Titles of the pages in the section now open, in OneNote's order (the same on two reads a moment apart)."""
+    read = lambda: [t for t in _frame(page).evaluate(PAGE_TITLES_JS) if t]
+    first = _until(page, read, 15)
+    if first is None:
+        return None
+    page.wait_for_timeout(800)
+    second = read()
+    return second if second else first
+
+
+def open_listed_page(page, title, wait):
+    """Click the listed page, check OneNote opened it, and read it. Returns the collect dict or None."""
+    items = _frame(page).locator("#PageList .pageListItem")
+    n = items.count()
+    hit = [i for i, t in enumerate(_frame(page).evaluate(PAGE_TITLES_JS)) if t == title]
+    if n == 0 or len(hit) != 1:
+        return None
+    items.nth(hit[0]).click()
+    page.wait_for_timeout(1500)
+    return O.read_loaded(page, page.url, {"section": "", "page": title, "student_hint": ""}, lambda s: None, wait)
+
+
 def run_class(req, emit, wait=14, signin_wait=240):
     from playwright.sync_api import sync_playwright
     base, students = req["base"], req["students"]
@@ -122,58 +254,104 @@ def run_class(req, emit, wait=14, signin_wait=240):
         raise T.ReadError("differs", "No page titles to try.")
     O.check_url(base)
     T.PROFILE.mkdir(parents=True, exist_ok=True)
-    hits = {}                                            # (section, title) -> students it worked for
+    hits = {}                                            # (section, title) -> students it worked for (guessing fallback)
+    state = {"signed_in": False}
+    def signin(page, url):
+        if state["signed_in"]:
+            return
+        if T._host(page.url) in T.LOGIN_HOSTS:
+            end = time.time() + signin_wait
+            while T._host(page.url) in T.LOGIN_HOSTS and time.time() < end:
+                page.wait_for_timeout(2000)
+            if T._host(page.url) in T.LOGIN_HOSTS:
+                raise T.ReadError("sign_in", "Sign in to Microsoft in the Chrome window that opened, then resume the job.")
+            page.goto(url, wait_until="domcontentloaded")
+            page.wait_for_timeout(1500)
+        state["signed_in"] = True
+    def host_ok(page):
+        if not O.ONENOTE_HOST.search(T._host(page.url)):
+            raise T.ReadError("differs", "The browser ended up on a different site than the notebook; nothing was read.")
+    def accept(page, st, sec, title, out, first_line_must_match=True):
+        """Only a page whose opened address names this student, this section and this title, and whose first line is that title."""
+        ident = None
+        for _ in range(10):                              # OneNote rewrites the address to the page it really opened
+            ident = resolved_identity(page.url)
+            if ident:
+                break
+            page.wait_for_timeout(500)
+        if not ident or not same_name(ident["student"], st["name"]):
+            return "other"
+        core = lambda x: [w for w in norm_tokens(x) if w != "and"]     # OneNote drops '&' (and escapes brackets) in the address
+        if same_name(ident["section"], sec) and core(ident["page"]) == core(title) and \
+                (not first_line_must_match or norm_tokens(first_line(out["page"]["text"])) == norm_tokens(title)):
+            out["source"]["student_hint"] = ident["student"]
+            return "ok"
+        return "no"
     with T.BrowserLock(), sync_playwright() as p:
         ctx = T._launch(p)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            signed_in = False
             for st in students:
-                order = sorted(((s, t) for s in sections for t in titles), key=lambda k: -hits.get(k, 0))[:max(MAX_TRIES, 1)]
-                found, tried = None, 0
-                for sec, title in order:
-                    tried += 1
-                    url = page_url(base, st["name"], sec, title)
-                    page.goto(url, wait_until="domcontentloaded")
-                    page.wait_for_timeout(1500)
-                    if not signed_in:
-                        if T._host(page.url) in T.LOGIN_HOSTS:
-                            end = time.time() + signin_wait
-                            while T._host(page.url) in T.LOGIN_HOSTS and time.time() < end:
-                                page.wait_for_timeout(2000)
-                            if T._host(page.url) in T.LOGIN_HOSTS:
-                                raise T.ReadError("sign_in", "Sign in to Microsoft in the Chrome window that opened, then resume the job.")
-                            page.goto(url, wait_until="domcontentloaded")
-                            page.wait_for_timeout(1500)
-                        signed_in = True
-                    if not O.ONENOTE_HOST.search(T._host(page.url)):
-                        raise T.ReadError("differs", "The browser ended up on a different site than the notebook; nothing was read.")
+                found, tried, listed, seen, unread = None, 0, False, [], ""
+                for sec in sections:
+                    # 1. the student's real page list (fast, and says what is there when nothing matches)
                     try:
-                        out = O.read_loaded(page, url, {"section": sec, "page": title, "student_hint": st["name"]}, lambda s: None, wait)
+                        f = open_section(page, base, st["name"], sec, signin)
+                        host_ok(page)
+                        if f == "nosection":
+                            listed = True
+                            continue
+                        pages = list_pages(page, f) if f is not None else None
                     except T.ReadError as e:
-                        if e.kind == "blocked":
+                        if e.kind in ("sign_in", "differs", "blocked"):
                             raise
-                        continue                         # blank page, or nothing loaded: try the next title
-                    ident = None
-                    for _ in range(10):                  # OneNote rewrites the address to the page it really opened
-                        ident = resolved_identity(page.url)
-                        if ident:
+                        f, pages = None, None
+                    except Exception:
+                        f, pages = None, None
+                    if pages is not None:
+                        listed = True
+                        seen += pages
+                        title, _why = pick_page(pages, titles)
+                        if title:
+                            try:
+                                out = open_listed_page(page, title, wait)
+                            except T.ReadError as e:
+                                if e.kind == "blocked":
+                                    raise
+                                out = None
+                            if out and accept(page, st, sec, title, out, False) == "ok":
+                                found = (sec, title, out)
+                                break
+                            unread = "unreadable" if not out else "mismatch"      # the page is listed but nothing trustworthy came out of it
+                        continue
+                    # 2. the list couldn't be read for this student: fall back to opening likely titles directly
+                    order = sorted(((sec, t) for t in titles), key=lambda k: -hits.get(k, 0))[:max(MAX_TRIES, 1)]
+                    for _s, title in order:
+                        tried += 1
+                        url = page_url(base, st["name"], sec, title)
+                        page.goto(url, wait_until="domcontentloaded")
+                        page.wait_for_timeout(1500)
+                        signin(page, url)
+                        host_ok(page)
+                        try:
+                            out = O.read_loaded(page, url, {"section": sec, "page": title, "student_hint": st["name"]}, lambda s: None, wait)
+                        except T.ReadError as e:
+                            if e.kind == "blocked":
+                                raise
+                            continue                     # blank page, or nothing loaded: try the next title
+                        verdict = accept(page, st, sec, title, out)
+                        if verdict == "other":
+                            break                        # opened someone else's page (this student has no such section): stop guessing
+                        if verdict == "ok":
+                            found = (sec, title, out)
+                            hits[(sec, title)] = hits.get((sec, title), 0) + 1
                             break
-                        page.wait_for_timeout(500)
-                    if not ident:
-                        continue                         # can't prove whose page this is: not accepted
-                    if not same_name(ident["student"], st["name"]):
-                        break                            # opened someone else's page (this student has no such section): stop guessing
-                    if same_name(ident["section"], sec) and norm_tokens(ident["page"]) == norm_tokens(title) and \
-                            norm_tokens(first_line(out["page"]["text"])) == norm_tokens(title):
-                        out["source"]["student_hint"] = ident["student"]
-                        found = (sec, title, out)
-                        hits[(sec, title)] = hits.get((sec, title), 0) + 1
+                    if found:
                         break
                 if found:
                     emit({"item": {"key": st["key"], "found": True, "section": found[0], "title": found[1], "tried": tried, "page": found[2]}})
                 else:
-                    emit({"item": {"key": st["key"], "found": False, "tried": tried}})
+                    emit({"item": {"key": st["key"], "found": False, "tried": tried, "listed": listed, "unread": unread, "pages": [x[:80] for x in seen[:40]]}})
         finally:
             ctx.close()
 

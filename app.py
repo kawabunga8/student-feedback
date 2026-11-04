@@ -833,8 +833,11 @@ def _run_onenote_class_job(queue, job):
             out = dict(msg["page"]); out.update({"ok": True, "title": msg["title"], "tried": msg["tried"]})
             queue.item_finished(job, claimed.pop(key), key, "done", result={"collect": out})
         else:
-            queue.item_finished(job, claimed.pop(key), key, "failed", error=f"{students.get(key, key)}: no page found ({msg.get('tried', 0)} titles tried)",
-                                result={"collect": {"kind": "not_found", "tried": msg.get("tried", 0)}})
+            how = ("a matching page is listed but it is empty or couldn't be read (open it in OneNote)" if msg.get("unread") == "unreadable" else
+                   "a matching page is listed but it didn't pass the identity check (open it in OneNote)" if msg.get("unread") == "mismatch" else
+                   f"no matching page among the {len(msg.get('pages') or [])} listed") if msg.get("listed") else f"no page found ({msg.get('tried', 0)} titles tried)"
+            queue.item_finished(job, claimed.pop(key), key, "failed", error=f"{students.get(key, key)}: {how}",
+                                result={"collect": {"kind": "not_found", "tried": msg.get("tried", 0), "pages": msg.get("pages") or [], "unread": msg.get("unread") or ""}})
     run = {"base": req["base"], "titles": req["titles"], "sections": req["sections"],
            "students": [{"key": k, "name": students[k]} for k in claimed]}
     err = ONENOTE_CLASS_RUNNER(run, item)
