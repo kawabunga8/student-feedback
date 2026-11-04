@@ -1078,6 +1078,14 @@ def _bd(st):
     return myschool_post.digest({k: st.get(k, '') for k in ('student_id', 'name', 'level', 'feedback', 'myschool_comment')})
 
 
+def _not_attempted(why, reported):
+    """What to tell for a student the run never reached. If an earlier student was already reported, the run's own error text is about
+    THAT student (it may say a post 'may have run'), so it is not repeated here as if it were about this one."""
+    if any(k != '@assignment' for k in reported):
+        return 'Not attempted: the run stopped at an earlier student. Nothing was done for this one; check that earlier student first.'
+    return why or 'Not attempted: the run stopped before this student.'
+
+
 def _run_myschool_batch_job(queue, job):
     """One Chrome session for one student or the whole class on MySchool (myschool_batch.py). Mirrors the Teams batch: each student is
     judged on their own and a save needs that student's approval to be current at the moment of writing."""
@@ -1108,7 +1116,7 @@ def _run_myschool_batch_job(queue, job):
     why = MYSCHOOL_BATCH_RUNNER(req, current, item, job['id'], queue, header)
     for key, i in idx.items():
         if key not in reported:
-            queue.item_finished(job, i, key, 'failed', error=(why or 'Not attempted: the run stopped before this student.')[:300])
+            queue.item_finished(job, i, key, 'failed', error=_not_attempted(why, reported)[:300])
 
 
 def enqueue_myschool_batch_job(body):
@@ -1213,7 +1221,7 @@ def _run_teams_batch_job(queue, job):
     why = final if isinstance(final, str) else ''
     for sid, i in idx.items():                           # anything not reported was not attempted (an earlier problem, or the run ended)
         if sid not in reported:
-            queue.item_finished(job, i, sid, 'failed', error=(why or 'Not attempted: the run stopped before this student.')[:300])
+            queue.item_finished(job, i, sid, 'failed', error=_not_attempted(why, reported)[:300])
 
 
 def teams_batch_runner(req, current, item, jid, queue, script='teams_batch.py', header=None):
