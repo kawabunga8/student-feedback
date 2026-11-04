@@ -393,6 +393,9 @@
   const rubricRead = () => teams && teams.rubricState === 'read' && teams.rubric ? teams.rubric : null;
   const rubricCanon = r => r ? [r.title, ...r.criteria.flatMap(c => c.levels.map(l => c.name + '|' + l.level + '|' + l.descriptor))].join('\n') : '';   // same text as app.py rubric_canon
   window.feedbackAssignment = {
+    // The assignment whose students are on the cards right now ('' while another one is opening or loading). The picker changes
+    // first and the cards later, so background deliveries must compare against this, not against the picker.
+    cardsOwner: () => (record && sess.loaded && !sess.busy && sess.aid === record.id) ? record.id : '',
     rubric: rubricRead,
     useRubric: () => !!(rubricRead() && teams.useRubric),
     setUseRubric: v => { if(!rubricRead()) return; teams = {...teams, useRubric: !!v}; updateBar(); },

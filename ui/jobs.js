@@ -103,12 +103,19 @@
   }
 
   let busy = false, timer = null;
-  async function deliver(j) {
+  // A draft belongs to the assignment its job was queued for. The cards must belong to that same assignment before and after
+  // every await, or the same student id and work in another assignment would receive this draft.
+  const ownsCards = aid => !!aid && asgId() === aid && !!fa() && !!fa().cardsOwner && fa().cardsOwner() === aid;
+  async function deliver(j, aid) {
+    if(j.assignment !== aid || !ownsCards(aid)) return;
     const m = await cardsByKey(), done = [], notes = {put: 0, kept: 0, changed: 0, missing: 0};
+    if(!ownsCards(aid)) return;
     for(const d of j.drafts || []) {
       const c = m.get(d.key);
       if(!c) { notes.missing++; continue; }                           // that student isn't on this page; draft stays on offer
-      if(await sha(c.querySelector('.work').value) !== d.work_sha) { notes.changed++; done.push(d.key); continue; }
+      const same = await sha(c.querySelector('.work').value) === d.work_sha;
+      if(!ownsCards(aid) || !c.isConnected) break;                    // switched assignments meanwhile: deliver nothing more, mark nothing more
+      if(!same) { notes.changed++; done.push(d.key); continue; }
       if(!j.overwrite && c.querySelector('.out:not(.err)')) { notes.kept++; done.push(d.key); continue; }
       insertDraft(c, d.feedback, j.basis); notes.put++; done.push(d.key);
     }
@@ -129,7 +136,7 @@
         for(const j of list) {
           if(j.type !== 'draft') continue;
           const full = (j.items || []).some(i => i.state === 'done' && !i.delivered) ? (await (await fetch('/api/jobs/' + j.id)).json()).job : j;
-          if(full && (full.drafts || []).length) { await deliver(full); }
+          if(full && (full.drafts || []).length && asgId() === aid) { await deliver(full, aid); }
         }
         render((await (await fetch('/api/jobs?assignment=' + aid)).json()).jobs || []);
         active = list.some(j => ['queued', 'running'].includes(j.state));

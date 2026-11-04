@@ -84,6 +84,31 @@ def page_url(base, student, section, title):
     return urllib.parse.urlunsplit((sp.scheme, sp.netloc, sp.path, qs, ""))
 
 
+def resolved_identity(url):
+    """Where OneNote actually opened, from the browser's own address once OneNote has rewritten it to ids:
+    .../wd=target(<Student>/<Section>.one|<section id>/<Page>|<page id>/). Returns {student, section, page}, or None while the
+    address still only holds what was asked for (no ids yet) or has another shape (e.g. Welcome.one|id/Page|id/ has no student).
+    A title that is missing for a student does not fail: OneNote silently opens some other page, and this shows which."""
+    wd = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query).get("wd", [""])[0]
+    m = re.match(r"target\((.*)\)$", wd)
+    if not m:
+        return None
+    segs = [x for x in m.group(1).split("/") if x]
+    if len(segs) != 3:
+        return None
+    parts = []
+    for seg in segs:
+        name, _, ident = seg.partition("|")
+        parts.append((urllib.parse.unquote(name), ident))
+    if not parts[1][0].endswith(".one") or not parts[1][1] or not parts[2][1]:
+        return None
+    return {"student": parts[0][0], "section": parts[1][0][:-4], "page": parts[2][0]}
+
+
+def same_name(a, b):
+    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()
+
+
 def first_line(text):
     return next((l.strip() for l in (text or "").splitlines() if l.strip()), "")
 
@@ -129,7 +154,19 @@ def run_class(req, emit, wait=14, signin_wait=240):
                         if e.kind == "blocked":
                             raise
                         continue                         # blank page, or nothing loaded: try the next title
-                    if norm_tokens(first_line(out["page"]["text"])) == norm_tokens(title):
+                    ident = None
+                    for _ in range(10):                  # OneNote rewrites the address to the page it really opened
+                        ident = resolved_identity(page.url)
+                        if ident:
+                            break
+                        page.wait_for_timeout(500)
+                    if not ident:
+                        continue                         # can't prove whose page this is: not accepted
+                    if not same_name(ident["student"], st["name"]):
+                        break                            # opened someone else's page (this student has no such section): stop guessing
+                    if same_name(ident["section"], sec) and norm_tokens(ident["page"]) == norm_tokens(title) and \
+                            norm_tokens(first_line(out["page"]["text"])) == norm_tokens(title):
+                        out["source"]["student_hint"] = ident["student"]
                         found = (sec, title, out)
                         hits[(sec, title)] = hits.get((sec, title), 0) + 1
                         break
