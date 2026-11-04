@@ -81,6 +81,15 @@ check("  the found page names the student it really came from", got["a"]["page"]
 got = run_fake(FakePage({"Alex Example", "Blair Example"}), two)
 check("A8 two students who both have the page are both found", got["a"]["found"] and got["b"]["found"], got)
 
+# ---- A9: choosing among a student's real pages
+# A9
+T2 = ["Task 2: Define & Ideate", "Task 2", "Stage 2"]
+check("  exact title wins", C.pick_page(["canva", "Task 2: Define and Ideate", "Stage 2"], T2) == ("Task 2: Define and Ideate", ""))
+check("  'Stage 2- Ideate', '2.Brainstorm', 'ICT Part 2- Define' are found when only one fits", all(C.pick_page(["x", w], T2)[0] == w for w in ("Stage 2- Ideate", "2.Brainstorm", "ICT Part 2- Define", "Task two notes")))
+check("  two possible pages are never guessed between", C.pick_page(["Stage 2 a", "2. b"], T2)[0] is None)
+check("  a student with nothing for it gets no page", C.pick_page(["Michaela's app", "Untitled Page", "Task three"], T2)[0] is None)
+check("  Task 3 is not mistaken for Task 2 or 30", C.pick_page(["Task 30", "Stage 3"], T2)[0] is None)
+
 # ---- B
 class Q:
     def __init__(self): self.items = {}; self.results = {}; self.queue = ["s1", "s2", "s3"]; self.cancel = False
