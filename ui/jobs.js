@@ -33,7 +33,8 @@
   const pickEl = $('#asg-pick'); if(pickEl) pickEl.addEventListener('change', () => setTimeout(syncUse, 400));
   const panel = make('div', 'card jobs-panel'); panel.hidden = true; students.before(panel);
   const note = make('div', 'bg-note'); note.setAttribute('role', 'status'); panel.before(note);
-  const say = t => { note.textContent = t || ''; };
+  let sayTimer = null;
+  const say = t => { note.textContent = t || ''; clearTimeout(sayTimer); if(t) sayTimer = setTimeout(() => { note.textContent = ''; }, 12000); };   // a message that stays forever just becomes noise
 
   const key = async c => c.dataset.rid || ('name-' + (await sha(c.querySelector('.name').value.trim().toLowerCase())).slice(0, 24));
   const cardsByKey = async () => { const m = new Map(); for(const c of document.querySelectorAll('.student')) m.set(await key(c), c); return m; };

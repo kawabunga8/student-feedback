@@ -103,7 +103,7 @@
     const pageNo = key => (/^p(\d+)$/.exec(key) || [])[1] || key;
     current = {jobId: id, batch: true, assignment}; prev.replaceChildren(); prev.hidden = false; act.replaceChildren();
     const doneBefore = (j.items || []).filter(i => i.state === 'done' && i.delivered).length;
-    prev.append(make('p', 'status', `${got.length} page${got.length === 1 ? '' : 's'} read and waiting` + (doneBefore ? `, ${doneBefore} already added` : '') + (failed.length ? `, ${failed.length} could not be read` : '') + '. Tick the pages to add; each name must match the class list.'));
+    prev.append(make('p', 'status', `${got.length} page${got.length === 1 ? '' : 's'} read and waiting` + (doneBefore ? `, ${doneBefore} already added` : '') + (failed.length ? `, ${failed.length} ${failed.every(f => /^s\d+$/.test(f.key)) ? 'with no matching page (not submitted, or titled differently)' : 'could not be read'}` : '') + '. Tick the pages to add; each name must match the class list.'));
     failed.forEach(f => prev.append(make('p', 'status collect-failed', /^s\d+$/.test(f.key) ? f.error : 'Page ' + pageNo(f.key) + ' was not collected: ' + f.error)));
     const rows = got.map(d => {
       const res = d.collect, src = res.source || {}, pg = res.page || {};
@@ -112,7 +112,7 @@
       const name = make('input', 'collect-bname'); name.value = src.student_hint || ''; name.setAttribute('aria-label', 'Student name for page ' + pageNo(d.key));
       const note = make('div', 'teams-now'); const meta = make('div', 'teams-now');
       const counts = res.non_text_counts || {}, kinds = Object.keys(counts);
-      meta.textContent = `Page ${pageNo(d.key)}: ${(pg.chars || 0).toLocaleString()} characters. UNVERIFIED completeness.` + (kinds.length ? ' Not read: ' + kinds.map(k => counts[k] + ' ' + k).join(', ') + '.' : ' Handwriting may be missing.');
+      meta.textContent = `${/^s\d+$/.test(d.key) ? 'OneNote page \u201c' + (res.title || src.page || 'untitled') + '\u201d' : 'Page ' + pageNo(d.key)}: ${(pg.chars || 0).toLocaleString()} characters. UNVERIFIED completeness.` + (kinds.length ? ' Not read: ' + kinds.map(k => counts[k] + ' ' + k).join(', ') + '.' : ' Handwriting may be missing.');
       const full = make('div', 'teams-full'); full.textContent = pg.text || ''; full.style.display = 'none'; full.style.whiteSpace = 'pre-wrap';
       const tog = make('button', 'linkish', 'Show text'); tog.type = 'button';
       tog.onclick = () => { const shut = full.style.display === 'none'; full.style.display = shut ? 'block' : 'none'; tog.textContent = shut ? 'Hide text' : 'Show text'; };

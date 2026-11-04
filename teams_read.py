@@ -443,15 +443,42 @@ class Session:
             pass
         return parsed["students"] if parsed["complete"] else None
 
+    SCROLL_LIST_JS = """() => { for (const e of document.querySelectorAll('*')) if (e.scrollHeight > e.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }"""
+
+    STEP_LIST_JS = """() => { for (const e of document.querySelectorAll('*')) if (e.scrollHeight > e.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) { const end = e.scrollTop + e.clientHeight >= e.scrollHeight - 5; e.scrollTop = end ? 0 : e.scrollTop + Math.max(200, e.clientHeight * 0.7); } }"""
+
+    def listed_in_tab(self):
+        """Every assignment row of the open tab. Teams draws more rows only as the list is scrolled (a tab can show 6 of 16), so
+        scroll until two rounds in a row add nothing."""
+        seen, quiet = {}, 0
+        for _ in range(12):
+            before = len(seen)
+            for x in parse_list(self.text()):
+                seen.setdefault((x["class_name"].strip(), x["title"].strip()), x)
+            quiet = quiet + 1 if seen and len(seen) == before else 0
+            if quiet >= 2:
+                break
+            try:
+                self.frame().evaluate(self.SCROLL_LIST_JS)
+            except Exception:
+                break
+            self.page.wait_for_timeout(1000)
+        try:
+            self.frame().evaluate("() => { for (const e of document.querySelectorAll('*')) if (e.scrollTop > 0) e.scrollTop = 0; }")
+        except Exception:
+            pass
+        return list(seen.values())
+
     def list_items(self):
         """Every assignment Teams lists across its tabs, once each, tagged with the tab it was found on. Teams' first tab
         (Upcoming) hides anything already due, so past-due and returned work is read from its own tabs."""
-        items = [dict(x, tab="Upcoming") for x in parse_list(self.open_assignments())]
+        self.open_assignments()
+        items = [dict(x, tab="Upcoming") for x in self.listed_in_tab()]
         seen = {(x["class_name"].strip(), x["title"].strip()) for x in items}
         for name in self.LIST_TABS[1:]:
             try:
                 self.select_tab(name)
-                found = parse_list(self.text())
+                found = self.listed_in_tab()
             except ReadError:
                 continue                            # a tab that can't be read is skipped, not guessed at
             self.note(f"tab {name}: {len(found)} assignments")
@@ -481,6 +508,10 @@ class Session:
                         hit = rows.nth(i); break
                 if hit is not None or time.time() > end_rows:
                     break
+                try:                                  # Teams draws the rows below the fold only once scrolled to: step down, wrap to the top at the end
+                    self.frame().evaluate(self.STEP_LIST_JS)
+                except Exception:
+                    pass
                 self.page.wait_for_timeout(700)
             if hit is None:
                 if attempt == 2:
