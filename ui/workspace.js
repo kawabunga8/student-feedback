@@ -29,8 +29,14 @@
   const pause = make('button', '', 'Stop after current student'); pause.disabled = true; toolbar.append(pause);
   const markAll = make('button', '', 'Mark all reviewed'); markAll.type = 'button'; toolbar.append(markAll);
   const unmarkAll = make('button', '', 'Unreview all'); unmarkAll.type = 'button'; toolbar.append(unmarkAll);
-  const postAll = make('button', 'primary', 'Post to all'); postAll.type = 'button'; toolbar.append(postAll);   // opens the Teams bulk dialog and reads Teams for every reviewed student
+  const noWork = make('button', '', 'Record no submission…'); noWork.type = 'button'; noWork.title = 'Select students with no submission, record the sources you checked, and review a shared comment.'; toolbar.append(noWork);
+  const postAll = make('button', 'primary', 'Preview Teams posting…'); postAll.type = 'button'; postAll.title = 'Preview reviewed feedback for Teams; posting requires a separate confirmation.'; toolbar.append(postAll);
   const search = make('input', 'student-search'); search.placeholder = 'Find a student…'; search.setAttribute('aria-label','Find a student'); toolbar.append(search);
+  const actionGroup=(label,controls)=>{const group=make('div','review-action-group');group.setAttribute('role','group');group.setAttribute('aria-label',label);group.append(make('span','review-action-label',label),...controls);toolbar.append(group);};
+  actionGroup('Draft feedback',[document.getElementById('add'),document.getElementById('go'),pause]);
+  actionGroup('Review assessments',[markAll,unmarkAll,noWork]);
+  actionGroup('Teams posting',[postAll]);
+  toolbar.append(search);
   review.append(document.getElementById('students'));
   const skip = document.getElementById('skipret').closest('label'); review.insertBefore(skip, document.getElementById('students'));
   review.insertBefore(document.getElementById('teamsnote'), document.getElementById('students'));
@@ -43,12 +49,12 @@
   const deliveryStatus = make('p','status'); exports.append(deliveryStatus);
   const targets = make('div','destination-grid');
   for(const name of ['Teams Assignments','MySchool']) {
-    const card = make('div','card'); card.append(make('h3','',name),make('span','badge','Assisted'),make('p','','Open it, copy each approved text, paste, then submit there yourself. Automated posting and read-back verification are not built yet.')); targets.append(card);
+    const isTeams=name==='Teams Assignments';
+    const card = make('div','card'); card.append(make('h3','',name),make('span','badge',isTeams?'Feedback + Return':'Levels + comment'),make('p','',isTeams?'Preview reviewed feedback, confirm Post and Return, then check the saved feedback in Teams. Return may notify students.':'Preview reviewed levels and comments, confirm Save, then check the result in MySchool. Publication settings are preserved.')); targets.append(card);
   }
   delivery.append(targets);
 
-  // ---- Assisted posting: open each system, copy the approved text, Shingo pastes and submits. Nothing here
-  // ---- posts automatically. Ticks record what he has done and checked; any later edit flags it as out of date.
+  // Posting controls launch destination-specific previews. Manual ticks remain available as a fallback.
   const LEVEL_CODE = {Emerging:'EMG', Developing:'DEV', Proficient:'PRF', Extending:'EXT'};
   const levelCode = l => { const m = /^(Emerging|Developing|Proficient|Extending)(\+?)$/.exec(l || ''); return m ? LEVEL_CODE[m[1]] + m[2] : ''; };
   const HOSTS = {teams:['teams.microsoft.com','teams.cloud.microsoft'], myschool:['rcs.myschoolmanagement.com']};
@@ -58,13 +64,13 @@
   const keep = {get:k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
   const linkKey = kind => 'posting-link:' + kind + ':' + (document.getElementById('atitle').value.trim() || 'default');
   const posting = make('div','card posting'); delivery.append(posting);
-  posting.append(make('h3','','Post feedback'), make('p','hint','Post to all sends each reviewed student\u2019s approved feedback to Teams one at a time. It reads Teams first and asks you to confirm once. Statuses below update by themselves.'));
+  posting.append(make('h3','','Post reviewed assessments'), make('p','hint','Choose Teams or MySchool below. Each action opens a preview and requires confirmation before writing. Completion is recorded separately for each destination; exports do not post anything.'));
   const postSummary = make('p','posting-summary'); postSummary.setAttribute('role','status'); posting.append(postSummary);
   const postActions = make('div','posting-actions'); posting.append(postActions);
-  const bPostTeams = make('button','primary','Post to all (Teams)'); bPostTeams.type = 'button'; bPostTeams.onclick = () => { if(window.postToAll) window.postToAll(); };
-  const bCheck = make('button','','Check Teams'); bCheck.type = 'button'; bCheck.title = 'Read who is already Returned in Teams (read-only).';
+  const bPostTeams = make('button','primary','Preview Teams batch…'); bPostTeams.type = 'button'; bPostTeams.onclick = () => { if(window.postToAll) window.postToAll(); };
+  const bCheck = make('button','','Refresh Teams statuses'); bCheck.type = 'button'; bCheck.title = 'Read who is already Returned in Teams (read-only); this does not verify saved feedback.';
   bCheck.onclick = () => { const b = document.getElementById('teams-status-read'); if(b) b.click(); else postSummary.textContent = 'Open or save an assignment first.'; };
-  const bPostMs = make('button','','Save to MySchool (all)'); bPostMs.type = 'button'; bPostMs.onclick = () => window.postToMySchool?.(null);
+  const bPostMs = make('button','','Preview MySchool batch…'); bPostMs.type = 'button'; bPostMs.onclick = () => window.postToMySchool?.(null);
   postActions.append(bPostTeams, bCheck, bPostMs);
   const postTable = make('table','posting-table'); posting.append(postTable);
   const manual = make('details','posting-manual'); manual.append(make('summary','','Do it by hand (copy and tick)')); posting.append(manual);
@@ -103,7 +109,7 @@
     if(!d) return {done:false, text:'', stale:false};
     const stale = !tickMatches(c, kind, d.bound);
     return {done:true, stale, at:d.at, text: stale ? 'Changed after posting: update it in ' + NAMES[kind] + ', then tick again'
-                                                    : 'Done ' + new Date(d.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})};
+                                                    : 'Completion recorded ' + new Date(d.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})};
   }
   function makeRow(c) {
     const row = make('div','posting-row'), who = make('div','posting-who');
@@ -157,15 +163,15 @@
   function teamsChip(c) {
     const s = postState(c, 'teams');
     if(!valid(c)) return ['Not reviewed', 'muted'];
-    if(s.done && !s.stale) return ['Posted ' + hhmm(s.at), 'good'];
+    if(s.done && !s.stale) return ['Posted · recorded ' + hhmm(s.at), 'good'];
     if(s.stale) return ['Changed after posting', 'warn'];
-    if(c.dataset.tstatus === 'Returned') return ['Returned in Teams', 'soft'];
-    return ['Ready to post', 'ready'];
+    if(c.dataset.tstatus === 'Returned') return ['Returned · feedback not verified here', 'soft'];
+    return ['Reviewed · preview Teams posting', 'ready'];
   }
   function msChip(c) {
     const s = postState(c, 'myschool'), p = payload(c);
     if(!valid(c)) return ['Not reviewed', 'muted'];
-    if(s.done && !s.stale) return ['Saved ' + hhmm(s.at), 'good'];
+    if(s.done && !s.stale) return ['Saved · recorded ' + hhmm(s.at), 'good'];
     if(s.stale) return ['Changed after saving', 'warn'];
     if(!p.myschool_comment.trim()) return ['No comment yet', 'muted'];
     return [p.level ? 'Ready to save' : 'Needs a level', p.level ? 'ready' : 'warn'];
@@ -178,9 +184,9 @@
     const sig = JSON.stringify([showMs, data]);
     if(sig === tableSig) return; tableSig = sig;
     const n = data.length, count = (arr, f) => arr.filter(f).length;
-    const done = count(data, d => d.t[1] === 'good' || d.t[1] === 'soft'), ready = count(data, d => d.t[1] === 'ready'), waiting = count(data, d => d.t[1] === 'muted'), changed = count(data, d => d.t[1] === 'warn');
-    postSummary.textContent = n ? 'Teams: ' + done + ' of ' + n + ' done · ' + ready + ' ready to post' + (waiting ? ' · ' + waiting + ' not reviewed' : '') + (changed ? ' · ' + changed + ' changed since posting' : '') +
-      (showMs ? ' · MySchool: ' + count(data, d => d.m[1] === 'good') + ' of ' + n + ' saved' : '') : 'No students yet. Load an Assessment folder first.';
+    const done = count(data, d => d.t[1] === 'good'), returned = count(data, d => d.t[1] === 'soft'), ready = count(data, d => d.t[1] === 'ready'), waiting = count(data, d => d.t[1] === 'muted'), changed = count(data, d => d.t[1] === 'warn');
+    postSummary.textContent = n ? 'Teams: ' + done + ' of ' + n + ' posts recorded · ' + ready + ' ready for preview' + (returned ? ' · '+returned+' Returned (feedback not verified here)' : '') + (waiting ? ' · ' + waiting + ' not reviewed' : '') + (changed ? ' · ' + changed + ' changed since posting' : '') +
+      (showMs ? ' · MySchool: ' + count(data, d => d.m[1] === 'good') + ' of ' + n + ' saves recorded' : '') : 'No students yet. Load work or add the class list first.';
     bPostTeams.disabled = !ready && !changed; bPostMs.disabled = !showMs;
     const th = (t) => { const e = make('th','',t); e.scope = 'col'; return e; };
     const head = make('tr'); head.append(th('Student'), th('Level'), th('Teams')); if(showMs) head.append(th('MySchool')); head.append(th(''));
@@ -205,7 +211,7 @@
   const approvals = new WeakMap();
   function payload(c) {
     return {student_id:c.dataset.rid || '', name:c.querySelector('.name').value,
-      work:c.querySelector('.work').value, notes:c.querySelector('.notes').value,
+      work:c.querySelector('.work').value, nosub:c.querySelector('.nosub')?.value || '', notes:c.querySelector('.notes').value,
       level:c.querySelector('.level').value, grade:c.querySelector('.sgrade').value || document.getElementById('grade').value,
       feedback:c.querySelector('.out:not(.err)')?.innerText || '', myschool_comment:c.querySelector('.myschool-comment').value,
       assignment:document.getElementById('atitle').value, instructions:document.getElementById('rubric').value,
@@ -253,6 +259,7 @@
       flagOutdated(c);
       if(!c.querySelector('.review-controls')) {
         const box = make('div','review-controls'); const label = make('label','','MySchool comment (review separately)');
+        const nosub = make('input','nosub'); nosub.placeholder = 'No submission confirmed: sources checked and date (leave empty when there is work)'; nosub.setAttribute('aria-label','No submission confirmed'); nosub.style.width = '100%'; box.append(nosub);
         const comment = make('textarea','myschool-comment'); label.append(comment);
         // Typing here ends the default: from then on the MySchool comment is the teacher's own text.
         comment.addEventListener('input', () => { if(comment.value !== c.dataset.msLast) c.dataset.msAuto = '0'; });
@@ -261,7 +268,7 @@
         approve.onclick = () => {
           if(valid(c)) { approvals.delete(c); note.textContent = ''; refresh(); return; }   // already reviewed: this click un-reviews
           const p = payload(c);
-          if(!p.student_id || !p.feedback.trim() || !p.work.trim()) { note.textContent = 'Match a Course Hub student and draft feedback first.'; return; }   // a level is optional (feedback only); MySchool posting asks for one
+          if(!p.student_id || !p.feedback.trim() || !(p.work.trim() || p.nosub.trim())) { note.textContent = 'Match a Course Hub student and draft feedback first.'; return; }   // a level is optional (feedback only); MySchool posting asks for one
           if(cards().some(other => other !== c && other.dataset.rid === c.dataset.rid)) { note.textContent = 'Resolve duplicate student cards before review.'; return; }
           approvals.set(c,{bound:JSON.stringify(p),reviewed_at:new Date().toISOString()}); refresh();
         };
@@ -283,13 +290,48 @@
     pause.disabled = !document.getElementById('go').disabled;
     renderPosting();
   }
-  const reviewable = c => { const p = payload(c); return !!p.student_id && !!p.feedback.trim() && !!p.work.trim() && !valid(c) &&
+  const reviewable = c => { const p = payload(c); return !!p.student_id && !!p.feedback.trim() && !!(p.work.trim() || p.nosub.trim()) && !valid(c) &&
     !cards().some(o => o !== c && o.dataset.rid === c.dataset.rid); };
   markAll.onclick = () => {
     const todo = cards().filter(reviewable);
     if(!todo.length) { markAll.title = 'Nothing left to review'; return; }
     if(!confirm('Mark ' + todo.length + ' draft' + (todo.length === 1 ? '' : 's') + ' as reviewed? Only do this once you have read them.')) return;
     const at = new Date().toISOString(); todo.forEach(c => approvals.set(c, {bound:JSON.stringify(payload(c)), reviewed_at:at})); refresh();
+  };
+  // One step for students who handed in nothing: a recorded 'no submission' note (sources checked, date), the level and comment you choose, then marked reviewed. Work stays empty: it is evidence, not feedback.
+  // Nothing is posted here; posting still asks for its own confirmation. Only matched students with empty Work are offered.
+  const NO_WORK_TEXT = 'No submission was found for this task. Please message me on Teams so we can find a time to catch up.';
+  const reviewableIdentity = c => !!c.dataset.rid && !cards().some(o => o !== c && o.dataset.rid === c.dataset.rid);
+  noWork.onclick = () => {
+    refresh(); // New cards need their evidence and review fields before bulk editing.
+    const empties = cards().filter(c => !c.querySelector('.work').value.trim() && !c.querySelector('.out:not(.err)') && reviewableIdentity(c));
+    const dlg = make('dialog', 'no-work-dialog'); const h = make('h3', '', 'No work found');
+    const list = make('div'); const picks = empties.map(c => { const l = make('label'); l.style.display = 'block'; const cb = make('input'); cb.type = 'checkbox'; cb.checked = false; l.append(cb, ' ' + c.querySelector('.name').value); list.append(l); return {c, cb}; });
+    if(!empties.length) list.textContent = 'Every matched student already has work or feedback.';
+    const lvl = make('select'); const src = cards()[0]; [...(src ? src.querySelectorAll('.level option') : [])].forEach(o => { const x = make('option', '', o.textContent); x.value = o.value || o.textContent; if(!o.value && o.textContent.startsWith('No level')) x.value = ''; lvl.append(x); });   // any level, none chosen for you
+    const checked = make('div'); const sourceBoxes = ['ClassNotebook', 'Teams attachments and links', 'Code.org'].map(n => { const l = make('label'); l.style.display = 'block'; const cb = make('input'); cb.type = 'checkbox'; cb.checked = false; l.append(cb, ' I checked ' + n); checked.append(l); return {n, cb}; });
+    const txt = make('textarea'); txt.value = NO_WORK_TEXT; txt.rows = 4; txt.style.width = '100%';
+    const notice = make('p'); notice.setAttribute('role', 'status');
+    const apply = make('button', 'primary', 'Apply and mark reviewed'); apply.type = 'button'; apply.disabled = !empties.length;
+    const close = make('button', '', 'Close'); close.type = 'button'; close.onclick = () => { dlg.close(); dlg.remove(); };
+    apply.onclick = () => {
+      const chosen = picks.filter(x => x.cb.checked).map(x => x.c); if(!chosen.length) { notice.textContent = 'Select at least one student.'; return; }
+      if(!txt.value.trim()) { notice.textContent = 'Enter the comment you have reviewed.'; return; }
+      if(chosen.some(c => c.querySelector('.work').value.trim() || c.querySelector('.out:not(.err)') || !reviewableIdentity(c))) { notice.textContent = 'A selected student changed. Close this window and check the selection again.'; return; }
+      const stamp = new Date().toISOString().slice(0, 10), used = sourceBoxes.filter(x => x.cb.checked).map(x => x.n);
+      if(!used.length) { notice.textContent = 'Tick at least one source you checked.'; return; }
+      chosen.forEach(c => {
+        const l = c.querySelector('.level'); l.value = lvl.value; l.dispatchEvent(new Event('change', {bubbles: true}));
+        if(window.insertDraft) window.insertDraft(c, txt.value.trim(), null);
+        const m = c.querySelector('.myschool-comment'); if(m) { m.value = txt.value.trim(); m.dispatchEvent(new Event('input', {bubbles: true})); }
+        const n = c.querySelector('.nosub'); if(n) { n.value = 'No submission found ' + stamp + ' in: ' + used.join(', '); n.dispatchEvent(new Event('input', {bubbles: true})); }
+      });
+      refresh();
+      const at = new Date().toISOString(); chosen.filter(reviewable).forEach(c => approvals.set(c, {bound: JSON.stringify(payload(c)), reviewed_at: at})); refresh();
+      dlg.close(); dlg.remove();
+    };
+    dlg.append(h, make('p', '', 'Records that no submission was found (what you checked and when), sets the level and comment you choose for the students ticked, and marks them reviewed. Read the shared comment before applying it. Posting is a separate step with its own preview and confirmation.'), list, checked, make('label', '', 'Level (optional; none is chosen for you)'), lvl, make('label', '', 'Comment (Teams and MySchool)'), txt, notice, apply, close);
+    document.body.append(dlg); dlg.showModal();
   };
   unmarkAll.onclick = () => { cards().forEach(c => approvals.delete(c)); refresh(); };
   postAll.onclick = () => { if(window.postToAll) window.postToAll(); };

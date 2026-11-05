@@ -1,12 +1,10 @@
 """Read one assignment's OneNote page for every student of a class, in ONE browser session (read-only).
 
-Why guessing: OneNote Online shows the automated browser no page list, but it opens a page by its title:
+The collector first opens the named student's section and reads its real page list after navigation settles.
+If that list cannot be verified, it falls back to likely assignment titles using a read-only page address:
   .../Doc.aspx?sourcedoc={notebook}&action=view&wd=target(<First Last>/<Section>.one|/<Page title>|/)
-Titles are exact (case doesn't matter, punctuation does), and a title that doesn't exist silently opens some other page.
-So for each student this tries the likely titles for the assignment, and counts a page as found only when the title that
-actually loaded equals the title asked for. A student with no match is reported with how many titles were tried, never
-guessed at. Titles that worked for earlier students are tried first for the next ones.
-
+A missing title can silently open another page, so collection requires the resolved student, section and page
+identity to match. Missing or ambiguous work is reported rather than guessed.
 Protocol (like teams_batch.py): one JSON request line on stdin; JSON lines on stdout:
   {"item": {"key", "found", "title", "section", "tried", "page": {...as onenote_read.collect...}}}   one per student
   {"ok": true, "done": true} or {"ok": false, "kind", "error"}
@@ -161,12 +159,12 @@ def notebook_url(base):
 
 
 def _until(page, fn, secs):
-    end = time.time() + secs
+    end = time.monotonic() + secs
     while True:
         v = fn()
         if v:
             return v
-        if time.time() >= end:
+        if time.monotonic() >= end:
             return None
         page.wait_for_timeout(500)
 
@@ -222,27 +220,52 @@ def open_section(page, base, student, section, signin):
 PAGE_TITLES_JS = """() => [...document.querySelectorAll('#PageList .pageListItem')].map(e => ((e.innerText || '').trim().split('\\n')[0] || '').trim())"""
 
 
-def list_pages(page, f):
-    """Titles of the pages in the section now open, in OneNote's order (the same on two reads a moment apart)."""
-    read = lambda: [t for t in _frame(page).evaluate(PAGE_TITLES_JS) if t]
-    first = _until(page, read, 15)
-    if first is None:
+def identity_matches(ident, student, section, title=None):
+    """Require resolved navigation, never the requested URL alone."""
+    if not ident or not same_name(ident["student"], student) or not same_name(ident["section"], section):
+        return False
+    core = lambda x: [w for w in norm_tokens(x) if w != "and"]
+    return title is None or core(ident["page"]) == core(title)
+
+
+def list_pages(page, f, student, section):
+    """Return a stable list only while the requested student's section is resolved.
+    The current page must appear in the list too; an old list is not evidence of missing work.
+    None means navigation/list readiness could not be established: use the title fallback.
+    """
+    previous = None
+    def settled():
+        nonlocal previous
+        before = resolved_identity(page.url)
+        if not identity_matches(before, student, section):
+            previous = None
+            return None
+        frame = _frame(page)
+        titles = [t for t in frame.evaluate(PAGE_TITLES_JS) if t] if frame is not None else []
+        after = resolved_identity(page.url)
+        if before != after or not any(identity_matches(after, student, section, t) for t in titles):
+            previous = None
+            return None
+        sample = (after, titles)
+        ready = sample == previous
+        previous = sample
+        return titles if ready else None
+    return _until(page, settled, 15)
+
+
+def open_listed_page(page, title, wait, student, section):
+    """Click once, then wait for the exact student/section/page before reading content."""
+    if not identity_matches(resolved_identity(page.url), student, section):
         return None
-    page.wait_for_timeout(800)
-    second = read()
-    return second if second else first
-
-
-def open_listed_page(page, title, wait):
-    """Click the listed page, check OneNote opened it, and read it. Returns the collect dict or None."""
     items = _frame(page).locator("#PageList .pageListItem")
     n = items.count()
     hit = [i for i, t in enumerate(_frame(page).evaluate(PAGE_TITLES_JS)) if t == title]
     if n == 0 or len(hit) != 1:
         return None
     items.nth(hit[0]).click()
-    page.wait_for_timeout(1500)
-    return O.read_loaded(page, page.url, {"section": "", "page": title, "student_hint": ""}, lambda s: None, wait)
+    if not _until(page, lambda: identity_matches(resolved_identity(page.url), student, section, title), min(wait, 20)):
+        return None
+    return O.read_loaded(page, page.url, {"section": section, "page": title, "student_hint": student}, lambda s: None, wait)
 
 
 def run_class(req, emit, wait=14, signin_wait=240):
@@ -301,7 +324,7 @@ def run_class(req, emit, wait=14, signin_wait=240):
                         if f == "nosection":
                             listed = True
                             continue
-                        pages = list_pages(page, f) if f is not None else None
+                        pages = list_pages(page, f, st["name"], sec) if f is not None else None
                     except T.ReadError as e:
                         if e.kind in ("sign_in", "differs", "blocked"):
                             raise
@@ -314,7 +337,7 @@ def run_class(req, emit, wait=14, signin_wait=240):
                         title, _why = pick_page(pages, titles)
                         if title:
                             try:
-                                out = open_listed_page(page, title, wait)
+                                out = open_listed_page(page, title, wait, st["name"], sec)
                             except T.ReadError as e:
                                 if e.kind == "blocked":
                                     raise

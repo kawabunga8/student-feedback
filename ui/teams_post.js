@@ -78,6 +78,7 @@
   const dlg=el('dialog');dlg.className='teams-dialog';dlg.setAttribute('aria-label','Teams bulk posting');
   const title=el('h3');dlg.append(title);
   const message=el('p');message.setAttribute('role','status');dlg.append(message);
+  const excluded = el('p'); excluded.className = 'posting-exclusions'; dlg.append(excluded);
   const table=el('div');table.className='teams-bulk-rows';dlg.append(table);
   const again=el('button','Read Teams again');again.type='button';
   const confirm=el('input');confirm.type='checkbox';const confirmText=el('span');const confirmLabel=el('label');confirmLabel.append(confirm,confirmText);
@@ -95,8 +96,8 @@
     rows.forEach(r=>{
       const line=el('div');line.style.margin='6px 0';
       r.nameInput.disabled=busy||r.state==='posted';
-      const status=r.state==='posted'?'✓ posted, Returned, and the saved feedback matches':r.state==='ready'?'ready'+(r.existing?' · replaces the feedback already there':''):r.state==='skipped'?'already Returned in Teams: skipped':r.state==='working'?'working…':r.state==='error'?'⚠ '+r.error:'waiting';
-      line.append(el('strong',r.name+'  '),r.nameInput,el('br'),el('span',status));table.append(line);
+      const status=r.state==='posted'?'✓ posted, Returned, and the saved feedback matches':r.state==='ready'?'ready'+(r.existing?' · replaces the feedback already there':''):r.state==='skipped'?'already Returned in Teams: skipped':r.state==='working'?'working…':r.state==='unattempted'?'Not attempted — '+r.error:r.state==='uncertain'?'Outcome uncertain — check Teams before trying again. '+r.error:r.state==='error'?'Preview blocked — '+r.error:'waiting';
+      line.append(el('strong',r.name+'  '),r.nameInput,el('br'),el('span',status));if(r.state==='ready'&&r.bound){const p=JSON.parse(r.bound),details=el('details');details.append(el('summary','Full preview: recipient and exact feedback'),el('p',(p.course||'(course unavailable)')+' → '+p.assignment+' → '+r.nameInput.value.trim()),el('p','Existing feedback: '+(r.existing||'(empty)')),el('p','Approved feedback:'));const text=el('div',p.feedback);text.style.whiteSpace='pre-wrap';details.append(text,el('p','Replaces existing feedback and Returns the work. The student may be notified.'));line.append(details);}table.append(line);
     });
     const n=ready().length;
     confirmText.textContent=' I checked the '+n+' student'+(n===1?'':'s')+' (class, assignment and exact feedback). Post and Return '+(n===1?'this student':'these '+n+', one after another')+'; they may be notified.';
@@ -123,6 +124,7 @@
     rows.forEach(r=>{if(r.state!=='posted'){r.state='working';r.error='';r.existing='';}});draw();
     try{await flush();
       const asked=rows.filter(r=>r.state!=='posted');if(!asked.length)return;
+      asked.forEach(r=>{const c=ws().cards().find(c=>ws().payload(c).student_id===r.id);r.bound=JSON.stringify(ws().payload(c));});
       const d=await post({type:'teams_batch',op:'inspect',assignment:owner,students:asked.map(r=>({student_id:r.id,target_name:r.nameInput.value.trim()}))});if(d.error)throw Error(d.error);
       curJob=d.job.id;
       const j=await follow(d.job.id,owner,token,(it,res)=>{const r=rows.find(x=>x.id===it.key);if(!r||r.state==='posted')return;
@@ -139,16 +141,16 @@
     todo.forEach(r=>{r.state='working';});draw();
     const done=[];let problem='';
     try{await flush();
-      if(todo.some(r=>!current(r.id)))throw Error('A student is no longer reviewed. Read Teams again.');
+      if(todo.some(r=>!current(r.id)||!ws().cards().some(c=>JSON.stringify(ws().payload(c))===r.bound)))throw Error('A student is no longer reviewed. Read Teams again.');
       const d=await post({type:'teams_batch',op:'save',assignment:owner,preview_id:previewJob,confirm:true,students:todo.map(r=>({student_id:r.id}))});if(d.error)throw Error(d.error);
       curJob=d.job.id;
       await follow(d.job.id,owner,token,(it,res)=>{const r=todo.find(x=>x.id===it.key);if(!r||r.state==='posted')return;
-        if(it.state==='done'&&res&&res.verified){r.state='posted';done.push(r.name);ws()?.markPosted?.(r.id,'teams');}
-        else if(it.state==='failed'){r.state='error';r.error=it.error||'Not posted.';if(!problem&&!/Not attempted/.test(r.error))problem=r.name+': '+r.error;}});
-    }catch(e){problem=problem||e.message;todo.forEach(r=>{if(r.state==='working'){r.state='error';r.error=e.message;}});}
-    finally{busy=false;confirm.checked=false;previewJob='';draw();}
-    const left=todo.filter(r=>r.state!=='posted').map(r=>r.name);
-    message.textContent=(done.length?'Posted, Returned and verified: '+done.join(', ')+'. ':'Nothing was posted. ')+(problem?'Stopped — '+problem+' ':'')+(left.length?'Not posted: '+left.join(', ')+'. Check Teams for any student that shows a problem, then read Teams again.':'All done: each is marked as posted.');
+        if(it.state==='done'&&res&&res.verified){r.state='posted';done.push(r.name);ws()?.markPosted?.(r.id,'teams',r.bound);}
+        else if(it.state==='failed'){r.error=it.error||'No verified result.';r.state=/^Not attempted/.test(r.error)?'unattempted':'uncertain';if(!problem&&!/Not attempted/.test(r.error))problem=r.name+': '+r.error;}});
+    }catch(e){problem=problem||e.message;todo.forEach(r=>{if(r.state==='working'){r.state='uncertain';r.error=e.message;}});}
+    finally{todo.forEach(r=>{if(r.state==='working'){r.state='uncertain';r.error='The job ended without a verified result.';}});busy=false;confirm.checked=false;previewJob='';draw();}
+    const uncertain=todo.filter(r=>r.state==='uncertain').map(r=>r.name),unattempted=todo.filter(r=>r.state==='unattempted').map(r=>r.name);
+    message.textContent='Verified posts: '+done.length+'. '+(problem?'Stopped — '+problem+' ':'')+(uncertain.length?'Outcome uncertain: '+uncertain.join(', ')+'. Check the saved feedback and Returned status in Teams before making a new preview. ':'')+(unattempted.length?'Not attempted: '+unattempted.join(', ')+'. These need a fresh preview before posting. ':'')+(!uncertain.length&&!unattempted.length?'All selected posts were verified.':'No automatic retries.');
     draw();
   }
   again.onclick=readTeams;save.onclick=postAll;
@@ -156,11 +158,14 @@
   // ids: the students to post (one or several); null = every reviewed student. Opens, reads Teams by itself, and waits for the one confirmation.
   async function postToTeams(ids){
     const owner=aid();generation++;busy=false;rows=[];previewJob='';draw();
-    dlg.showModal();title.textContent='Post to Teams';message.textContent='Loading reviewed students…';
+    excluded.textContent='';dlg.showModal();title.textContent='Post to Teams';message.textContent='Loading reviewed students…';
     if(!owner){message.textContent='Open a saved assignment first.';return;}
     try{await flush();const d=await(await fetch('/api/teams-post/approved?assignment='+encodeURIComponent(owner))).json();if(d.error)throw Error(d.error);
       const posted=sid=>{const w=ws();const c=w?.cards().find(x=>w.payload(x).student_id===sid);const t=c&&(w.posted.get(c)||{}).teams;return !!t&&t.bound===JSON.stringify(w.payload(c));};
       const list=(d.students||[]).filter(s=>ids?ids.includes(s.student_id):!posted(s.student_id));   // the whole class skips students this app already posted
+      const eligible=new Set((d.students||[]).map(s=>s.student_id));
+      const omitted=ws().cards().map(c=>ws().payload(c)).filter(p=>!ids||ids.includes(p.student_id)).filter(p=>!eligible.has(p.student_id)||(!ids&&posted(p.student_id))).map(p=>p.name+': '+(!eligible.has(p.student_id)?'not eligible — check student match, saved review and required feedback':'a current Teams post is already recorded'));
+      excluded.textContent=omitted.length?'Excluded from this preview: '+omitted.join('; ')+'.':'All eligible students in this selection are included.';
       rows=list.map(s=>{const nameInput=el('input');nameInput.value=defaultName(s.student_id);nameInput.placeholder='Last, First — as the Teams roster shows it';nameInput.setAttribute('aria-label','Teams roster name for '+s.name);
         nameInput.onchange=()=>{const r=rows.find(x=>x.nameInput===nameInput);if(r&&r.state!=='posted'){r.state='';r.error='';confirm.checked=false;draw();}};
         return {id:s.student_id,name:s.name,nameInput,state:'',error:'',existing:''};});

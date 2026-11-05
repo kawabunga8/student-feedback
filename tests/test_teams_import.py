@@ -14,7 +14,9 @@ class O(BaseHTTPRequestHandler):  # stand-in Ollama
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
         self._j({"message": {"content": "You wrote five how-might-we questions and linked each idea to a client need. Next, explain why the idea fits."}})
     def log_message(self, *a): pass
-threading.Thread(target=ThreadingHTTPServer(("127.0.0.1", 11434), O).serve_forever, daemon=True).start()
+model = ThreadingHTTPServer(("127.0.0.1", 0), O)
+os.environ['OLLAMA_URL'] = os.environ['LMSTUDIO_URL'] = f'http://127.0.0.1:{model.server_port}'
+threading.Thread(target=model.serve_forever, daemon=True).start()
 
 import app, teams_read as T
 guard_app(app, HOME); block_live_browser(T)
@@ -31,7 +33,11 @@ STD = {"ADST 9-12": [{"id": "0", "label": "ADST 9 - Learning Standard 1: Definin
 app.course_data = lambda: json.loads(json.dumps(COURSES))
 app.load_standards = lambda: STD
 app.start_worker()
-threading.Thread(target=ThreadingHTTPServer(("127.0.0.1", 8765), app.Handler).serve_forever, daemon=True).start()
+server = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+app.PORT = server.server_port
+app.ALLOWED_HOSTS = {f'127.0.0.1:{app.PORT}', f'localhost:{app.PORT}'}
+BASE = f'http://127.0.0.1:{app.PORT}'
+threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
 from teams_fixtures import LIST, names, sts, roster, SV, SV_RUBRIC, CLASS_ID, ASSIGNMENT_ID
@@ -54,7 +60,7 @@ def fake(op, cls="", title=""):
 app.TEAMS_RUNNER = fake
 def call(method, path, body=None, headers=None):
     h = {"Content-Type": "application/json", **(headers or {})}
-    req = urllib.request.Request("http://127.0.0.1:8765" + path, data=None if body is None else json.dumps(body).encode(), headers=h if method == "POST" else {}, method=method)
+    req = urllib.request.Request(BASE + path, data=None if body is None else json.dumps(body).encode(), headers=h if method == "POST" else {}, method=method)
     try:
         with urllib.request.urlopen(req) as r: return r.status, json.load(r)
     except urllib.error.HTTPError as e: return e.code, {}
@@ -99,9 +105,9 @@ mode[0] = "ok"
 from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
     b = p.chromium.launch(**LAUNCH); ctx = b.new_context(viewport={"width": 1280, "height": 900})
-    ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin="http://127.0.0.1:8765")
+    ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE)
     pg = ctx.new_page(); errs = []; pg.on("pageerror", lambda e: errs.append(str(e))); pg.on("dialog", lambda d: d.accept())
-    pg.goto("http://127.0.0.1:8765/"); time.sleep(2)
+    pg.goto(BASE + "/"); time.sleep(2)
     pg.click("text=Choose from Teams…"); time.sleep(0.3)
     check("6 dialog offers the reader and keeps the paste route", pg.locator(".teams-list-btn").count() == 1 and pg.locator(".teams-paste").count() == 1)
     pg.click(".teams-list-btn")
@@ -110,9 +116,12 @@ with sync_playwright() as p:
     check("  fractions shown as unlabelled", "not labelled by Teams" in pg.locator(".teams-list").inner_text())
     pg.fill(".teams-filter", "task a"); check("  filter narrows the list", pg.locator(".teams-item").count() == 2, pg.locator(".teams-item").count())
     row = pg.locator(".teams-item", has_text="Q1 ICT 9").first
-    row.locator("text=Read this assignment").click()
+    row.locator("text=Use assignment details").click()
     pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
     rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
+    read_count = len(calls)
+    row.locator("text=Use assignment details").click()
+    check("  repeated discovery reuses the read and says so", len(calls) == read_count and 'Reusing this page' in pg.locator('.teams-job-msg').inner_text())
     check("7 preview: name, instructions, counts, source", any("Assignment name Task A: Build & Share" in x for x in rows) and any("Status counts 6 students: 4 viewed" in x for x in rows) and any("Source Class 11111111" in x for x in rows), rows)
     check("  reference materials listed by name, marked not read", any("listed by name only (not opened or read" in x and "Sample deck.pptx" in x for x in rows))
     check("  instructions exclude the reference material and the AI widget", "flashcards" not in pg.evaluate("document.querySelector('.teams-row[data-key=instructions]').innerText"))
@@ -149,7 +158,7 @@ with sync_playwright() as p:
     pg.fill(".teams-filter", "") if pg.locator(".teams-filter").is_visible() else None
     n0 = len(calls); pg.click(".teams-list-btn")
     wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
-    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()
+    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Refresh details from Teams").click()
     pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
     rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
     check("10a rubric marker shown as present, not read", any("present in Teams" in x and "not read" in x for x in rows), rows[-3:])
@@ -167,7 +176,7 @@ with sync_playwright() as p:
     mode[0] = "rubric_read"; pg.click(".teams-close"); time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
     n0 = len(calls); pg.click(".teams-list-btn")
     wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
-    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()
+    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Refresh details from Teams").click()
     pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
     rows = pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())")
     src_row = next(x for x in rows if x.startswith("Source"))
@@ -205,7 +214,7 @@ with sync_playwright() as p:
     mode[0] = "note"; pg.click(".teams-close") if pg.locator(".teams-close").is_visible() else None; time.sleep(0.3); pg.click("text=Choose from Teams…"); time.sleep(0.3)
     n0 = len(calls); pg.click(".teams-list-btn")
     wait(lambda: len(calls) > n0 and calls[-1][0] == "list"); pg.wait_for_function("document.querySelector('.teams-job-msg') && /Choose one to read/.test(document.querySelector('.teams-job-msg').textContent)", timeout=15000); time.sleep(2)
-    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Read this assignment").click()
+    pg.locator(".teams-item", has_text="Q1 ICT 9").first.locator("text=Refresh details from Teams").click()
     pg.wait_for_selector(".teams-row[data-key=source]", timeout=15000)
     src_row = next(x for x in pg.eval_on_selector_all(".teams-row", "rs => rs.map(r => r.innerText.replace(/\\s+/g,' ').trim())") if x.startswith("Source"))
     check("10e absent plus a diagnostic note: both shown, nothing claimed present", "no rubric button was shown" in src_row and "Open grading rubric guide" in src_row, src_row[-200:])

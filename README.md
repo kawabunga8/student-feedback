@@ -139,6 +139,17 @@ If Course Hub is unreachable the page says so and falls back to:
 1. `courses.cache.json` - the last successful live copy, else
 2. `courses.json` - a hand-kept list (last resort).
 
+## Reusable agent skills
+
+The repository carries maintained `SKILL.md` workflows that Codex or Claude can read when asked to use them:
+
+- [phase-a-collect-and-draft](skills/phase-a-collect-and-draft/SKILL.md): collect verified work, draft locally, save and stop for teacher review.
+- [phase-b-upload](skills/phase-b-upload/SKILL.md): post the saved, reviewed assessment to Teams/MySchool with preview, authorization and destination verification.
+- [rcs-teams-and-myschool-access](skills/rcs-teams-and-myschool-access/SKILL.md): school-browser access, Class Notebook navigation and sign-in/profile troubleshooting.
+- [push-laptop-repo-to-github](skills/push-laptop-repo-to-github/SKILL.md): inspect, validate, commit and/or push the changes requested by the user.
+
+These are repository files, not copies automatically synced from a Claude account or globally installed Codex skills. For example: “Use `skills/phase-a-collect-and-draft/SKILL.md` to collect and draft this assignment.” Loading a skill does not authorize posting, publishing or pushing beyond the requested task. The three newly added workflows were reconstructed from the current app and repository documentation; the original account-only skill files were unavailable.
+
 ## Files
 - `app.py` - web UI + server. `feedback.py` - prompt, model call (Ollama or LM Studio), CLI.
 - `jobs.py` - background job queue (drafting, Teams/OneNote reads, posting jobs). `ui/` - the workspace's scripts and styles; see `ui/README.md`.

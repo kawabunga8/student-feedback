@@ -286,7 +286,8 @@ def _save_assignment_record(rec, base_version):
     old = old if isinstance(old, dict) else None
     if old and base_version != old.get("version"):
         raise VersionConflict(old)
-    same = lambda k: json.dumps((old or {}).get(k), sort_keys=True) == json.dumps(rec.get(k), sort_keys=True)
+    squash = lambda v: " ".join(v.split()) if isinstance(v, str) else v     # spacing and line breaks alone are not a change of wording
+    same = lambda k: json.dumps(squash((old or {}).get(k)), sort_keys=True) == json.dumps(squash(rec.get(k)), sort_keys=True)
     changed = [k for k in RECORD_KEYS if k not in ("id", "sources") and not same(k)] if old else ["created"]
     if old and not changed:
         return old
@@ -316,7 +317,7 @@ def save_class_mapping(p):
 
 ASSESSMENT = Path.home() / "Desktop" / "Teaching" / "Assessment"   # Assessment/<year>/<quarter>/<course>/<assignment>/FirstName_LastName.txt
 SESSION_INDEX = APP_DATA / "session-index.json"        # assignment id -> its folder under Assessment (bookkeeping only)
-SESSION_TEXT = ("student_id", "name", "orig", "grade", "work", "notes", "level", "feedback", "myschool_comment", "basis")
+SESSION_TEXT = ("student_id", "name", "orig", "grade", "work", "notes", "level", "feedback", "myschool_comment", "basis", "nosub")
 _FS_BAD = re.compile(r'[\x00-\x1f/\\:*?"<>|]')
 
 
@@ -404,11 +405,11 @@ def check_reviewed(bound, st, rec, stamp):
     if not isinstance(b, dict):
         return {"current": False, "reasons": ["unreadable approval"]}
     course = rec.get("course") or {}
-    want = {k: st.get(k, "") for k in ("student_id", "name", "work", "notes", "level", "feedback", "myschool_comment")}
+    want = {k: st.get(k, "") for k in ("student_id", "name", "work", "notes", "level", "feedback", "myschool_comment", "nosub")}
     want.update(grade=st.get("grade") or rec.get("grade", ""), assignment=rec.get("title", ""),
                 course=course.get("label", ""), school_year=course.get("schoolYear", ""), quarter=rec.get("term", ""))
-    reasons = [k for k, v in want.items() if b.get(k) != v]
-    if str(b.get("instructions", "")).strip() != compose_rubric(rec.get("instructions"), rec.get("focus")):
+    reasons = [k for k, v in want.items() if (b.get(k) or "") != (v or "")]     # an approval saved before a field existed counts that field as empty
+    if " ".join(str(b.get("instructions", "")).split()) != " ".join(compose_rubric(rec.get("instructions"), rec.get("focus")).split()):
         reasons.append("instructions")
     labels = [x.get("label") for x in (b.get("standards") or []) if isinstance(x, dict)]
     if labels != list(rec.get("standards") or []):
@@ -2305,7 +2306,7 @@ $("#go").onclick = async () => {
       failed++; res.innerHTML = '<div class="out err"></div>'; res.firstChild.textContent = err.message;
     }
   }
-  $("#status").textContent = (window.feedbackStopRequested ? "Stopped after " + i + " students. Existing drafts remain available." : failed ? failed + " of " + cards.length + " failed (see the red messages)." : "Done. Feedback is editable: tweak it, then copy.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
+  $("#status").textContent = (window.feedbackStopRequested ? "Drafting stopped after " + i + " students. Existing drafts remain available." : failed ? "Drafting: " + failed + " of " + cards.length + " failed (see the red messages)." : "Drafting finished. Edit the feedback, then mark it reviewed. Posting is a separate step.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
 </script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
