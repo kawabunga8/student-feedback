@@ -47,3 +47,11 @@ label,.d-label{font-size:12px;font-weight:650;margin-bottom:7px;color:var(--ink)
 .chip.good{background:#d7eadc;color:#1d5a3b}.chip.soft{background:#e3efe6;color:#35684d}.chip.ready{background:#dfe9f5;color:#24476f}.chip.warn{background:#f6e4d6;color:#8a4417}.chip.muted{background:var(--soft);color:var(--mute)}
 @media(prefers-color-scheme:dark){.chip.good{background:#27493a;color:#aee0c3}.chip.soft{background:#2b4637;color:#a3d2b7}.chip.ready{background:#26405c;color:#b4d1f0}.chip.warn{background:#573721;color:#f1c7a3}}
 .posting-manual{margin-top:8px}.posting-manual>summary{cursor:pointer;font-size:13px;color:var(--mute);padding:6px 0}
+
+/* Keep drafting, review and destination actions visually distinct. */
+.review-toolbar{position:static;align-items:flex-start}
+.review-action-group{display:flex;flex-wrap:wrap;align-items:center;gap:10px;flex:1 1 100%;padding:10px 0;border-bottom:1px solid var(--line)}
+.review-action-label{flex:0 0 100%;font-size:12px;font-weight:700;color:var(--mute)}
+.review-toolbar .student-search{margin-left:0;max-width:320px}
+.overview{overflow-x:auto}.overview-table{min-width:760px}.overview-table th,.overview-table td{vertical-align:top}
+#status{position:static;margin:16px 0;box-shadow:none}

@@ -11,8 +11,8 @@
     work: ['Add the student’s work', 'attention'], match: ['Match to the class list', 'attention'], duplicate: ['Resolve the duplicate card', 'attention'],
     failed: ['Draft failed: try again or write it yourself', 'attention'], regen: ['Instructions changed: regenerate the draft', 'attention'],
     draft: ['Draft the feedback', 'todo'], level: ['Choose a level yourself', 'todo'], review: ['Read it and mark reviewed', 'todo'],
-    rereview: ['Changed since review: review again', 'todo'], post: ['Reviewed: ready to post', 'ready'], done: ['Done in Teams and MySchool', 'done'],
-    teamsdone: ['Posted to Teams · MySchool next', 'ready'], msdone: ['Saved to MySchool · Teams next', 'ready']};
+    rereview: ['Changed since review: review again', 'todo'], post: ['Reviewed · preview posting', 'ready'], done: ['Complete in Teams and MySchool (recorded)', 'done'],
+    teamsdone: ['Teams recorded · MySchool next', 'ready'], msdone: ['MySchool recorded · Teams next', 'ready']};
 
   function classify(i) {
     if(!i.hasWork) return 'work';
@@ -31,7 +31,7 @@
     const out = c.querySelector('.out'), a = ws.approvals.get(c), ok = ws.valid(c), p = ws.posted.get(c) || {};
     const fresh = k => !!p[k] && (ws.tickMatches ? ws.tickMatches(c, k, p[k].bound) : p[k].bound === JSON.stringify(ws.payload(c)));
     const rid = c.dataset.rid || '';
-    return {name: c.querySelector('.name').value.trim(), hasWork: !!c.querySelector('.work').value.trim(), matched: !!rid,
+    return {name: c.querySelector('.name').value.trim(), hasWork: !!(c.querySelector('.work').value.trim() || c.querySelector('.nosub')?.value.trim()), matched: !!rid,
       duplicate: !!rid && cards.some(o => o !== c && o.dataset.rid === rid),
       hasDraft: !!out && !out.classList.contains('err'), draftError: !!out && out.classList.contains('err'),
       outdated: c.classList.contains('outdated'), level: c.querySelector('.level').value, reviewed: ok, changed: !!a && !ok,
@@ -41,11 +41,11 @@
   const box = make('div', 'card overview'); box.hidden = false;
   const head = make('div', 'overview-head'); head.append(make('h3', '', 'Class overview'));
   const filter = make('select'); filter.setAttribute('aria-label', 'Show students');
-  [['all', 'All students'], ['attention', 'Needs attention'], ['todo', 'Still to do'], ['ready', 'Ready to post'], ['done', 'Done']].forEach(([v, t]) => { const o = make('option', '', t); o.value = v; filter.append(o); });
+  [['all', 'All students'], ['attention', 'Needs attention'], ['todo', 'Draft / review pending'], ['ready', 'Reviewed / posting pending'], ['done', 'Complete in both systems']].forEach(([v, t]) => { const o = make('option', '', t); o.value = v; filter.append(o); });
   head.append(filter); box.append(head);
   const counts = make('p', 'hint overview-counts'); counts.setAttribute('role', 'status'); box.append(counts);
-  const table = make('table', 'overview-table'); table.append(make('caption', '', 'Where each student is, and the next thing to do. Read-only; click a name to go to that student.'));
-  const thead = make('thead'), hr = make('tr'); ['Student', 'Teams', 'Level', 'Next'].forEach(h => { const th = make('th', '', h); th.scope = 'col'; hr.append(th); });
+  const table = make('table', 'overview-table'); table.append(make('caption', '', 'Review and posting are separate steps. Teams status is the last status read or imported; completion records come from app verification or your manual confirmation. Click a name to open the assessment.'));
+  const thead = make('thead'), hr = make('tr'); ['Student', 'Teams status', 'Level', 'Teams feedback', 'MySchool assessment', 'Next step'].forEach(h => { const th = make('th', '', h); th.scope = 'col'; hr.append(th); });
   thead.append(hr); const tbody = make('tbody'); table.append(thead, tbody); box.append(table);
   review.insertBefore(box, list);
 
@@ -56,15 +56,17 @@
     const tally = {attention: 0, todo: 0, ready: 0, done: 0}; infos.forEach(x => tally[x.group]++);
     const want = filter.value, shown = infos.filter(x => want === 'all' || x.group === want);
     const nextSig = JSON.stringify([want, shown.map(x => [x.i.name, x.i.teamsStatus, x.i.level, x.stage])]);
-    counts.textContent = infos.length ? `${tally.attention} need attention · ${tally.todo} still to do · ${tally.ready} ready to post · ${tally.done} done` : 'No students yet.';
+    counts.textContent = infos.length ? `${tally.attention} need attention · ${tally.todo} draft / review pending · ${tally.ready} reviewed / posting pending · ${tally.done} complete in both systems` : 'No students yet.';
     if(nextSig === sig) return;
     sig = nextSig; tbody.replaceChildren();
-    if(!shown.length) { const r = make('tr'), td = make('td', 'hint', infos.length ? 'No students in this group.' : 'Add or load students to see them here.'); td.colSpan = 4; r.append(td); tbody.append(r); return; }
+    if(!shown.length) { const r = make('tr'), td = make('td', 'hint', infos.length ? 'No students in this group.' : 'Add or load students to see them here.'); td.colSpan = 6; r.append(td); tbody.append(r); return; }
     shown.forEach(x => {
       const r = make('tr', 'overview-' + x.group), who = make('td'), b = make('button', 'linkish', x.i.name || 'Unnamed student'); b.type = 'button';
       b.onclick = () => { x.c.hidden = false; x.c.scrollIntoView({block: 'start'}); const f = x.c.querySelector('.name'); if(f) f.focus({preventScroll: true}); };
       who.append(b);
-      r.append(who, make('td', '', x.i.teamsStatus || (x.i.postedTeams ? 'Posted ✓' : '–')), make('td', '', x.i.level || '–'), make('td', '', NEXT[x.stage][0]));
+      r.append(who, make('td', '', x.i.teamsStatus || 'Not checked'), make('td', '', x.i.level || 'No level set'),
+        make('td', '', x.i.postedTeams ? 'Posted · recorded' : 'No post recorded'),
+        make('td', '', x.i.postedMyschool ? 'Saved · recorded' : 'No save recorded'), make('td', '', NEXT[x.stage][0]));
       r.dataset.stage = x.stage; tbody.append(r);
     });
   }

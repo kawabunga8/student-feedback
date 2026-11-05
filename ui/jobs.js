@@ -79,7 +79,7 @@
   }
   btn.onclick = () => queue();
 
-  const STATE = {queued: 'Waiting to start', running: 'Writing…', completed: 'Finished', failed: 'Stopped', cancelled: 'Cancelled',
+  const STATE = {queued: 'Waiting to start', running: 'Writing drafts…', completed: 'Drafting finished', failed: 'Drafting stopped', cancelled: 'Cancelled',
                  interrupted: 'Interrupted (the app was closed)', waiting_for_sign_in: 'Waiting for sign-in', needs_teacher_input: 'Needs you'};
   function render(jobs) {
     panel.replaceChildren();

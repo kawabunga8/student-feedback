@@ -330,16 +330,43 @@
       return onDone(res);
     }
   }
-  async function startTeams(body, onDone) {
-    tmsg.textContent = 'Starting…'; tb.disabled = true;
-    let d; try { d = await postJSON('/api/jobs', {type:'teams_read', ...body}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
-    if(d.error) { tmsg.textContent = d.error; return stopWait(); }
-    return follow(d.job.id, onDone);
+  // Discovery cache: page memory only. Posting and per-student collection never use it.
+  // BEGIN TEAMS DISCOVERY CACHE
+  function teamsDiscoveryCache(now = () => Date.now()) {
+    const entries = new Map(), ttl = 10 * 60 * 1000;
+    const key = b => JSON.stringify([b.op, b.class || '', b.title || '']);
+    const copy = v => JSON.parse(JSON.stringify(v));
+    return {
+      get(b) { const k = key(b), e = entries.get(k); if(!e) return null;
+        if(now() - e.at >= ttl) { entries.delete(k); return null; } return copy(e.value); },
+      put(b, value) { if(value?.ok === true) entries.set(key(b), {at:now(), value:copy(value)}); },
+      forget(b) { entries.delete(key(b)); }
+    };
   }
+  // END TEAMS DISCOVERY CACHE
+  const discovery = teamsDiscoveryCache(), discoveryPending = new Map();
+  async function startTeams(body, onDone, refresh = false) {
+    const key = JSON.stringify([body.op, body.class || '', body.title || '']);
+    if(refresh) discovery.forget(body);
+    const reused = !refresh && discovery.get(body);
+    if(reused) { onDone({...reused, reused:true}); return; }
+    if(discoveryPending.has(key)) { const result = await discoveryPending.get(key); if(result) onDone({...result, reused:true}); return; }
+    const run = (async () => {
+      tmsg.textContent = 'Starting…'; tb.disabled = true;
+      let d; try { d = await postJSON('/api/jobs', {type:'teams_read', ...body}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+      if(d.error) { tmsg.textContent = d.error; stopWait(); return null; }
+      let result = null;
+      await follow(d.job.id, res => { discovery.put(body, res); result = res; onDone(res); });
+      return result;
+    })();
+    discoveryPending.set(key, run);
+    try { return await run; } finally { discoveryPending.delete(key); }
+  }
+  tb.textContent = 'Refresh assignment list from Teams';
   tb.onclick = () => startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length;
     if(design.teamsClass && tItems.some(x => x.class_name === design.teamsClass)) tfilter.value = design.teamsClass;   // show this course's class first
     renderTeamsList();
-    tmsg.textContent = tItems.length ? `Read ${tItems.length} assignments at ${when(res.read_at)}. Choose one to read.` : 'Teams showed no assignments.'; });
+    tmsg.textContent = tItems.length ? `Read ${tItems.length} assignments at ${when(res.read_at)}. Choose one to read.` : 'Teams showed no assignments.'; }, true);
   tfilter.addEventListener('input', renderTeamsList);
   function renderTeamsList() {
     const q = tfilter.value.trim().toLowerCase(), cls = clsIn.value.trim().toLowerCase();
@@ -349,7 +376,7 @@
       const r = make('div', 'teams-item'); r.setAttribute('role', 'listitem');
       const t = make('div'); t.append(make('strong', '', x.title), make('div', 'hint-inline', `${x.class_name} · ${x.due_heading ? x.due_heading + ', ' : ''}${x.due_text.replace(/^due\s*/i, 'due ')}${x.tab && x.tab !== 'Upcoming' ? ' · ' + x.tab : ''}` +
         (x.fractions.length ? ` · Teams counts ${x.fractions.join(' and ')} (not labelled by Teams)` : '')));
-      r.append(t, button('Read this assignment', '', () => readOne(x)));
+      r.append(t, button('Use assignment details', '', () => readOne(x)), button('Refresh details from Teams', '', () => readOne(x, true)));
       return r;
     }));
     if(!rows.length && tItems.length) tlist.append(make('div', 'hint-inline', 'Nothing matches that filter.'));
@@ -359,15 +386,15 @@
   const rubricText = st => st === 'read' ? 'present and read from Teams (kept separate from the instructions).'
     : st === 'present_unread' ? 'present in Teams (View rubric), not read: its descriptors are not in the instructions and were not imported. Check it in Teams.'
     : 'no rubric button was shown in Student view; check Teams if you expected one.';
-  function readOne(x) {
+  function readOne(x, refresh = false) {
     return startTeams({op:'read', class:x.class_name, title:x.title}, res => {
       const sv = res.student_view, rc = res.roster_counts;
       parsed = {title:sv.title, due:sv.due, instructions:sv.instructions, referenceMaterials:sv.reference_materials || [], team:res.source.teams_class,
                 found:true, how:'read', source:res.source, counts:rc, sections:sv.sections_found, refsRead:!!sv.reference_materials_read, rubricState:rubricStateOf(sv), rubricNote:sv.rubric_note || '', rubric:sv.rubric || null};
       clsIn.value = res.source.teams_class; paste.value = '';
-      tmsg.textContent = 'Read “' + sv.title + '” at ' + when(res.read_at) + '. Check the preview below against Teams before using it.';
+      tmsg.textContent = (res.reused ? 'Reusing this page’s read of “' : 'Read “') + sv.title + '” at ' + when(res.read_at) + '. Check the preview below against Teams before using it. Use Refresh details from Teams if the assignment changed.';
       render();
-    });
+    }, refresh);
   }
   const sourceLabel = () => parsed && parsed.how === 'read' ? 'Teams (read by the app ' + when(parsed.source.read_at) + ')' : 'Teams (Student view, pasted)';
   function read() {
@@ -871,7 +898,7 @@
       return {student_id:c.dataset.rid || '', name:c.querySelector('.name').value, orig:c.dataset.orig || '',
         grade:c.querySelector('.sgrade').value, work:c.querySelector('.work').value, notes:c.querySelector('.notes').value,
         level:c.querySelector('.level').value, feedback:out ? out.innerText : '',
-        myschool_comment:c.querySelector('.myschool-comment')?.value || '', basis:out ? (ws.draftBasis.get(out) || '') : '',
+        myschool_comment:c.querySelector('.myschool-comment')?.value || '', nosub:c.querySelector('.nosub')?.value || '', basis:out ? (ws.draftBasis.get(out) || '') : '',
         approval:a ? {bound:a.bound, at:a.reviewed_at} : null, posting:{teams:tick(p.teams), myschool:tick(p.myschool)}};
     }).filter(s => s.name.trim() || s.work.trim() || s.feedback.trim());
   }
@@ -897,6 +924,7 @@
     ws.refresh();                                       // creates each card's review controls
     for(const [c, st] of made) {
       const box = c.querySelector('.myschool-comment'); if(box) box.value = st.myschool_comment;
+      const ns = c.querySelector('.nosub'); if(ns) ns.value = st.nosub || '';
       if(st.approval) ws.approvals.set(c, {bound:st.approval.bound, reviewed_at:st.approval.at});
       const p = {}; for(const k of ['teams', 'myschool']) if(st.posting && st.posting[k]) p[k] = {bound:st.posting[k].bound, at:st.posting[k].at};
       if(Object.keys(p).length) ws.posted.set(c, p);
