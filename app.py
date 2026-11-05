@@ -1984,7 +1984,7 @@ function setNote(card, text, warn){
 }
 function matchCard(card){
   const name = card.querySelector(".name").value.trim();
-  if(!ROSTER.length || !name){ setNote(card, ""); return null; }
+  if(!ROSTER.length || !name){ delete card.dataset.rid; card.querySelector(".pick").value = ""; setNote(card, ""); return null; }
   const raw = card.dataset.orig || name;          // the name as uploaded/typed, before correction
   card.dataset.orig = raw;
   const r = findStudent(raw);
@@ -2018,7 +2018,7 @@ function wirePicker(card){
   const pick = card.querySelector(".pick");
   pick.innerHTML = rosterOptions();
   pick.onchange = () => {
-    const s = ROSTER[pick.value]; if(!s) return;
+    const s = ROSTER[pick.value]; if(!s) { delete card.dataset.rid; setNote(card, "Choose a student from the current class list.", true); return; }
     card.querySelector(".name").value = s.first + " " + s.last;
     card.dataset.rid = s.id; setNote(card, "✓ Matched to class list: " + s.last + ", " + s.first);
     // Course Hub stores one grade per student, true only for the year it was recorded in.
@@ -2026,17 +2026,28 @@ function wirePicker(card){
     if(s.grade && s.grade_year_reference === SCHOOL_YEAR && GRADES.includes(g) && g !== $("#grade").value) card.querySelector(".sgrade").value = g;
   };
 }
+let rosterGeneration = 0;
 async function loadRoster(){
-  const c = COURSES[$("#course").value];
+  const generation = ++rosterGeneration;
+  const selection = $("#course").value, quarter = $("#quarter").value;
+  const c = COURSES[selection];
+  const current = () => generation === rosterGeneration && selection === $("#course").value && quarter === $("#quarter").value;
   ROSTER = []; $("#addall").disabled = true;
+  document.querySelectorAll(".student").forEach(card => {
+    delete card.dataset.rid; wirePicker(card);
+    setNote(card, c ? "Waiting for the current class list; student match needs checking." : "Choose a course to match this student.", true);
+  });
   if(c && c.sections){
-    const qn = ($("#quarter").value||"").replace("Q","");
+    const qn = (quarter||"").replace("Q","");
+    $("#rosternote").textContent = "Loading class list for " + c.name + "…";
     try {
       const d = await (await fetch("/api/roster?name=" + encodeURIComponent(c.name) + "&quarter=" + qn)).json();
+      if(!current()) return;
       if(d.error) $("#rosternote").textContent = d.error;
-      else { ROSTER = d.students; $("#rosternote").textContent = ROSTER.length + (ROSTER.length === 1 ? " student" : " students") + " in " + c.name + " (class list held in memory only)."; }
-    } catch(e){ $("#rosternote").textContent = "Couldn't load the class list."; }
+      else { ROSTER = Array.isArray(d.students) ? d.students : []; $("#rosternote").textContent = ROSTER.length + (ROSTER.length === 1 ? " student" : " students") + " in " + c.name + " (class list held in memory only)."; }
+    } catch(e){ if(!current()) return; $("#rosternote").textContent = "Couldn't load the class list. Student matches are cleared; choose the course again to retry."; }
   } else $("#rosternote").textContent = c ? "Class list unavailable (course list isn't live from Course Hub)." : "";
+  if(!current()) return;
   document.querySelectorAll(".student").forEach(wirePicker);
   $("#addall").disabled = !ROSTER.length;
   if(ROSTER.length) matchAll(document.querySelectorAll(".student .name").length > 1);

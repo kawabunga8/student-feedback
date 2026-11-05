@@ -178,7 +178,7 @@
   }
   let tableSig = '';
   function renderPostTable() {
-    const all = cards().filter(c => c.querySelector('.work').value.trim()).sort((a,b) => surname(payload(a).name).localeCompare(surname(payload(b).name)));
+    const all = cards().filter(c => c.querySelector('.work').value.trim() || c.querySelector('.nosub')?.value.trim()).sort((a,b) => surname(payload(a).name).localeCompare(surname(payload(b).name)));
     const showMs = all.some(c => valid(c) && payload(c).myschool_comment.trim());
     const data = all.map(c => ({id:payload(c).student_id, name:payload(c).name || 'Unnamed student', level:payload(c).level, t:teamsChip(c), m:msChip(c), ts:c.dataset.tstatus || ''}));
     const sig = JSON.stringify([showMs, data]);
