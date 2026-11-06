@@ -61,3 +61,5 @@ label,.d-label{font-size:12px;font-weight:650;margin-bottom:7px;color:var(--ink)
 .attachment-dialog input[type=checkbox]{width:auto;flex:0 0 auto;margin:3px 0 0}
 .attachment-results section{padding:12px 0;border-top:1px solid var(--line);margin-top:16px}
 .attachment-results details{padding:8px 0}.attachment-results pre{overflow-wrap:anywhere}.attachment-dialog>select{margin-bottom:16px}
+
+.attachment-dialog>.attachment-bulk-import{position:sticky;top:0;z-index:1;box-shadow:0 3px 8px #0002}

@@ -29,9 +29,9 @@
   const foot = make('div', 'teams-actions');
   const close = make('button', 'collect-close', 'Close'); close.type = 'button'; close.onclick = () => dlg.close();
   foot.append(close);
-  // ---- whole class: tries likely page titles for every student of the loaded class (read-only, one Chrome session)
+  // ---- whole class: reuse the notebook tree and read each student’s page list (read-only, one Chrome session)
   const clsBox = make('div', 'collect-class');
-  clsBox.append(make('p', 'status', 'Or collect the whole class: paste any one address from the class notebook and the app opens each student\u2019s page of this assignment by its likely title. Students whose page isn\u2019t found are listed, not guessed. This takes a few minutes (about 6 s per title tried).'));
+  clsBox.append(make('p', 'status', 'Or collect the whole class: paste one address from the class notebook. The app reuses the open notebook and reads each student\u2019s page list to find this assignment. If the list cannot be read, it tries likely page titles. Missing or ambiguous pages are listed for checking; nothing is invented.'));
   const nbIn = make('input', 'collect-notebook'); nbIn.placeholder = 'Any page address from the class notebook (https://\u2026.sharepoint.com/\u2026/Doc.aspx?sourcedoc=\u2026)'; nbIn.setAttribute('aria-label', 'Class notebook address');
   try { nbIn.value = localStorage.getItem('collect-notebook') || ''; } catch(e) { /* not remembered */ }
   const ttIn = make('textarea', 'collect-titles'); ttIn.rows = 3; ttIn.placeholder = 'Page titles to try, one per line (leave empty: made from the assignment title, e.g. \u201cStage 3 - Prototype & Test\u201d)'; ttIn.setAttribute('aria-label', 'Page titles to try');
