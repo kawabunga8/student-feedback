@@ -776,13 +776,13 @@ def enqueue_onenote_job(body):
 ONENOTE_RUNNER = onenote_runner
 
 
-def onenote_class_runner(req, item):
-    """Run onenote_class.py (one Chrome session for the whole class). item(msg) is called for each student as it finishes.
+def browser_collection_runner(req, item, script, label):
+    """Run a read-only collection worker in one Chrome session. item(msg) is called per student.
     Returns {} on success or {'kind', 'error'}. Tests replace this function. Page text is passed to item() only."""
     if os.environ.get("SF_FORBID_BROWSER"):
         return {"kind": "setup", "error": "Browser use is switched off (SF_FORBID_BROWSER is set)."}
     py = str(TOOLS_PYTHON) if TOOLS_PYTHON.exists() else sys.executable
-    proc = subprocess.Popen([py, str(HERE / "onenote_class.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    proc = subprocess.Popen([py, str(HERE / script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     timer = {"t": None}
     def arm():
         if timer["t"]:
@@ -801,13 +801,92 @@ def onenote_class_runner(req, item):
                 item(msg["item"])
             elif "ok" in msg:
                 return {} if msg["ok"] else {"kind": msg.get("kind", "error"), "error": msg.get("error", "The class reader failed.")}
-        return {"kind": "error", "error": "The OneNote class reader stopped without finishing."}
+        return {"kind": "error", "error": "The " + label + " reader stopped without finishing."}
     finally:
         if timer["t"]:
             timer["t"].cancel()
         if proc.poll() is None:
             proc.kill()
         proc.wait(); proc.stdin.close(); proc.stdout.close()
+
+
+def enqueue_attachment_job(body):
+    """Collect only confirmed Course Hub identities, bound to the saved Teams destination."""
+    if QUEUE is None:
+        raise RuntimeError('The job worker is not running.')
+    aid = str(body.get('assignment',''))
+    rec = load_assignment_record(aid)
+    destination = teams_destination(rec)
+    roster = roster_for((rec.get('course') or {}).get('name',''), str(rec.get('term','')).replace('Q',''))
+    by_id = {str(s['id']):s for s in roster}
+    wanted = body.get('students')
+    if not isinstance(wanted,list) or not 1 <= len(wanted) <= 60:
+        raise ValueError('Choose between 1 and 60 matched students.')
+    students,seen = [],set()
+    for entry in wanted:
+        sid = str(entry.get('student_id','')) if isinstance(entry,dict) else ''
+        if sid not in by_id or sid in seen:
+            raise ValueError('Every student must match the saved course roster exactly once.')
+        seen.add(sid); s=by_id[sid]
+        if not s.get('first') or not s.get('last') or sum(1 for other in roster if (other.get('first','').strip().casefold(), other.get('last','').strip().casefold()) == (s['first'].strip().casefold(), s['last'].strip().casefold())) != 1:
+            raise ValueError('The roster name is missing or shared by more than one student. Verify this student in Teams manually.')
+        students.append({'student_id':sid,'name':(s['first']+' '+s['last']).strip(),'target_name':s['last']+', '+s['first']})
+    if any(j['state'] in ('queued','running','waiting_for_sign_in') for j in QUEUE.list_for(aid,50) if j['type']=='attachment_collect'):
+        raise ValueError('An attachment collection is already active. Reopen its results or stop it first.')
+    reuse = str(body.get('reuse_job',''))
+    if reuse:
+        previous = QUEUE.get(reuse)
+        if previous['assignment'] != aid or previous['type'] != 'attachment_collect' or previous['state'] in ('queued','running','waiting_for_sign_in'):
+            raise ValueError('Only a finished attachment collection for this assignment can be reused.')
+        side = QUEUE.request_of(previous)
+        if {k:side['request'].get(k) for k in destination} != destination:
+            raise ValueError('The saved Teams destination changed. Collect again without reusing results.')
+        results=side.get('results',{})
+        for st in students:
+            old=(results.get(st['student_id']) or {}).get('attachments') or {}
+            if old.get('source') == destination['source'] and old.get('student_id') == st['student_id']:
+                st['previous']=old.get('attachments') or []
+                st['previous_submission']=old.get('submission_id')
+    rel,_ = session_folder(aid,rec)
+    return QUEUE.enqueue('attachment_collect',aid,rel,{**destination,'students':students},[{'key':s['student_id'],'work_sha':''} for s in students])
+
+
+def _run_attachment_job(queue, job):
+    req = queue.request_of(job)['request']
+    if teams_destination(load_assignment_record(job['assignment'])) != {k:req[k] for k in ('class','title','source')}:
+        raise jobs.JobFailed('The Teams destination changed. Start a new collection.')
+    claimed = {}
+    while not queue.cancel_requested(job['id']):
+        nxt=queue.next_item(job['id'])
+        if not nxt:break
+        claimed[nxt['key']]=nxt['idx']
+    if not claimed:return
+    def item(msg):
+        if queue.cancel_requested(job['id']):
+            # Return pending claims to the queue so cancellation can finish them cleanly.
+            raise jobs.JobFailed('Collection stopped. Completed results remain available.')
+        sid=msg.get('student_id')
+        if sid not in claimed:return
+        idx=claimed.pop(sid)
+        if msg.get('error'):
+            queue.item_finished(job,idx,sid,'failed',error='The attachment panel could not be verified. Open Teams to check this student.',result={'attachments':msg})
+        elif msg.get('source') == req['source']:
+            queue.item_finished(job,idx,sid,'done',result={'attachments':msg})
+        else:
+            queue.item_finished(job,idx,sid,'failed',error='The collected assignment identity did not match.')
+    run={**req,'students':[s for s in req['students'] if s['student_id'] in claimed]}
+    err=ATTACHMENT_RUNNER(run,item)
+    if err.get('kind')=='sign_in':raise jobs.NeedsSignIn('Sign in to Microsoft in the app Chrome window, then resume collection.')
+    if err:raise jobs.JobFailed(err.get('error','Attachment collection could not finish.'))
+    for sid,idx in claimed.items():
+        queue.item_finished(job,idx,sid,'failed',error='No collection result was returned. Retry this student; no missing-work conclusion was made.')
+
+
+ATTACHMENT_RUNNER = lambda req,item: browser_collection_runner(req,item,'attachment_collect.py','Attachment')
+
+
+def onenote_class_runner(req, item):
+    return browser_collection_runner(req, item, 'onenote_class.py', 'OneNote class')
 
 
 ONENOTE_CLASS_RUNNER = onenote_class_runner
@@ -1541,7 +1620,7 @@ def start_worker():
             if d == root or not d.is_relative_to(root):
                 raise ValueError("bad folder")
             return d
-        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "onenote_class": _run_onenote_class_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, "myschool_read": _run_myschool_read_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'myschool_batch_read':_run_myschool_batch_job, 'myschool_batch_inspect':_run_myschool_batch_job, 'myschool_batch_save':_run_myschool_batch_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
+        QUEUE = jobs.JobQueue(APP_DATA / "jobs.sqlite", {"attachment_collect": _run_attachment_job, "myschool_create_verify": _run_myschool_create_job, "myschool_create_list": _run_myschool_create_job, "myschool_create_inspect": _run_myschool_create_job, "myschool_create_save": _run_myschool_create_job, "teams_create": _run_teams_create_job, "draft": _run_draft_job, "teams_read": _run_teams_job, "onenote_read": _run_onenote_job, "onenote_class": _run_onenote_class_job, "teams_students": _run_teams_students_job, "myschool_inspect": _run_myschool_job, "myschool_save": _run_myschool_job, "myschool_read": _run_myschool_read_job, 'teams_post_inspect':_run_teams_post_job, 'teams_post_save':_run_teams_post_job, 'myschool_batch_read':_run_myschool_batch_job, 'myschool_batch_inspect':_run_myschool_batch_job, 'myschool_batch_save':_run_myschool_batch_job, 'teams_batch_inspect':_run_teams_batch_job, 'teams_batch_dry':_run_teams_batch_job, 'teams_batch_save':_run_teams_batch_job}, inside, _atomic_write_json, _read_json)
     QUEUE.start()
     return QUEUE
 
@@ -2320,7 +2399,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Drafting stopped after " + i + " students. Existing drafts remain available." : failed ? "Drafting: " + failed + " of " + cards.length + " failed (see the red messages)." : "Drafting finished. Edit the feedback, then mark it reviewed. Posting is a separate step.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/attachments.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -2347,7 +2426,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/vision.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/attachments.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/vision.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -2502,7 +2581,7 @@ class Handler(BaseHTTPRequestHandler):
                                                 "conflict": True, "current": c.current})
                 if self.path.startswith("/api/jobs"):
                     if self.path == "/api/jobs":
-                        enqueue = {"myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "onenote_class": enqueue_onenote_class_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job, "teams_batch": enqueue_teams_batch_job, "myschool_batch": enqueue_myschool_batch_job}.get(body.get("type"), enqueue_draft_job)
+                        enqueue = {"attachment_collect": enqueue_attachment_job, "myschool_create": enqueue_myschool_create_job, "teams_create": enqueue_teams_create_job, "teams_read": enqueue_teams_job, "onenote_read": enqueue_onenote_job, "onenote_class": enqueue_onenote_class_job, "teams_students": enqueue_teams_students_job, "myschool": enqueue_myschool_job, "teams_post": enqueue_teams_post_job, "teams_batch": enqueue_teams_batch_job, "myschool_batch": enqueue_myschool_batch_job}.get(body.get("type"), enqueue_draft_job)
                         return self._send(200, {"job": _job_view(enqueue(body))})
                     _, _, _, jid, action = self.path.split("/")
                     if not JOB_ID.fullmatch(jid) or QUEUE is None:

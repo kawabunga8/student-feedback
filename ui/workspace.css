@@ -55,3 +55,9 @@ label,.d-label{font-size:12px;font-weight:650;margin-bottom:7px;color:var(--ink)
 .review-toolbar .student-search{margin-left:0;max-width:320px}
 .overview{overflow-x:auto}.overview-table{min-width:760px}.overview-table th,.overview-table td{vertical-align:top}
 #status{position:static;margin:16px 0;box-shadow:none}
+
+/* Attachment evidence is inspected per student before it is added to Work. */
+.attachment-dialog .attachment-student,.attachment-dialog .attachment-confirm{display:flex;align-items:flex-start;gap:8px;margin:10px 0}
+.attachment-dialog input[type=checkbox]{width:auto;flex:0 0 auto;margin:3px 0 0}
+.attachment-results section{padding:12px 0;border-top:1px solid var(--line);margin-top:16px}
+.attachment-results details{padding:8px 0}.attachment-results pre{overflow-wrap:anywhere}.attachment-dialog>select{margin-bottom:16px}
