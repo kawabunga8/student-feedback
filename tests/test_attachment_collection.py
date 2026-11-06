@@ -90,6 +90,11 @@ class Popup:
 original=Control.click
 def click(self,**kw):self.ctx.clicks.append(self.name);self.ctx.event.value=Popup(self.name)
 Control.click=click
+original_open=A.open_attachment
+def fake_open(page,item):
+    with item.ctx.expect_page() as event:item.click()
+    return event.value,None
+A.open_attachment=fake_open
 with patch.object(A,'read_attachment_page',lambda pg:{'state':'text' if pg.name=='one.docx' else 'blocked','url':'https://example.org/'+pg.name,'text':'synthetic' if pg.name=='one.docx' else ''}):
     first,_=A.collect_attachments(Pg(),ctx,panel)
 assert ctx.clicks==['one.docx','two.docx']
@@ -101,6 +106,7 @@ ctx.clicks=[]
 with patch.object(A,'read_attachment_page',lambda pg:{'state':'text','url':'https://example.org/'+pg.name,'text':'synthetic'}):
     A.collect_attachments(Pg(),ctx,panel,list(reversed(second)))
 assert ctx.clicks==['one.docx','two.docx']
+A.open_attachment=original_open
 assert '/ui/attachments.js' in app.PAGE
 print('PASS one opening per attachment, successful-result reuse on retry, and cache invalidation for changed attachment lists')
 # Classify a document, a blocked page and a screenshot-only page without inferring body text as evidence.

@@ -82,6 +82,31 @@ def read_attachment_page(pg):
     return {'state':'unreadable', 'url':url, 'note':'No supported document text or screenshot was captured. Open the source manually.'}
 
 
+def open_attachment(page, item, wait=8):
+    """Click once and return as soon as a popup OR a new identifiable inline viewer appears."""
+    before = {f.url for f in page.frames}
+    popups = []
+    listener = lambda pg: popups.append(pg)
+    page.on('popup', listener)
+    try:
+        item.click(timeout=8000)
+        deadline = time.monotonic() + wait
+        while True:
+            if popups:
+                if len(popups) != 1:
+                    for pg in popups:pg.close()
+                    raise ValueError('Multiple attachment windows opened; manual check required.')
+                return popups[0], None
+            candidates = list(dict.fromkeys(f.url for f in page.frames if f.url not in before and web_url(f.url) and re.search(r'wordeditor|wopiframe|doc\.aspx|classnotebook', f.url, re.I)))
+            if len(candidates) == 1:
+                return None, candidates[0]
+            if time.monotonic() >= deadline:
+                return None, None
+            page.wait_for_timeout(200)
+    finally:
+        page.remove_listener('popup', listener)
+
+
 def collect_attachments(page, ctx, panel, previous=None):
     tabs = panel.get_by_role('tablist', name='Attachment')
     if tabs.count() != 1:
@@ -100,25 +125,17 @@ def collect_attachments(page, ctx, panel, previous=None):
             results.append({**old[i], 'reused':True})
             continue
         item = controls.nth(i)
-        before_frames = {f.url for f in page.frames}
+        pg = None
         try:
-            with ctx.expect_page(timeout=5000) as opened:
-                item.click(timeout=8000)             # only selects/opens the attachment, never an editor or Return control
-            pg = opened.value
-        except Exception:
-            pg = None
-        try:
+            pg, inline = open_attachment(page, item)
             if pg is not None:
                 entry = read_attachment_page(pg)
+            elif inline:
+                # Read an identifiable viewer separately, not the grading panel's editor controls.
+                pg = ctx.new_page(); pg.goto(inline, wait_until='domcontentloaded', timeout=20000)
+                entry = read_attachment_page(pg)
             else:
-                # Open inline viewers in a separate read-only browser page rather than extracting editor chrome as work.
-                candidates = [f.url for f in page.frames if f.url not in before_frames and web_url(f.url) and re.search(r'wordeditor|wopiframe|doc\.aspx|classnotebook', f.url, re.I)]
-                candidates = list(dict.fromkeys(candidates))
-                if len(candidates) == 1:
-                    pg = ctx.new_page(); pg.goto(candidates[0], wait_until='domcontentloaded', timeout=20000)
-                    entry = read_attachment_page(pg)
-                else:
-                    entry = {'state':'unreadable', 'url':'', 'note':'The attachment opened inline without one identifiable document address. Open it in Teams manually.'}
+                entry = {'state':'unreadable', 'url':'', 'note':'No identifiable attachment viewer appeared. Open this source in Teams manually.'}
         except Exception:
             entry = {'state':'unreadable', 'url':web_url(pg.url) if pg else '', 'note':'The attachment could not be read. No text was inferred.'}
         finally:
@@ -201,10 +218,21 @@ def run(req, emit):
             ctx.close()
 
 
+class CollectionStopped(BaseException):
+    """Cooperative stop must unwind panel/context cleanup without becoming an item failure."""
+
+
 def main():
     try:
-        run(json.loads(sys.stdin.readline()),lambda msg:print(json.dumps(msg,ensure_ascii=False),flush=True))
+        req = json.loads(sys.stdin.readline())
+        def emit(msg):
+            print(json.dumps(msg,ensure_ascii=False),flush=True)
+            if req.get('acknowledge') and sys.stdin.readline().strip() != 'continue':
+                raise CollectionStopped()
+        run(req,emit)
         print(json.dumps({'ok':True}),flush=True)
+    except CollectionStopped:
+        print(json.dumps({'ok':True,'stopped':True}),flush=True)
     except T.ReadError as e:
         print(json.dumps({'ok':False,'kind':e.kind,'error':str(e)[:200]}),flush=True)
     except Exception:

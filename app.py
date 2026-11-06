@@ -776,7 +776,7 @@ def enqueue_onenote_job(body):
 ONENOTE_RUNNER = onenote_runner
 
 
-def browser_collection_runner(req, item, script, label):
+def browser_collection_runner(req, item, script, label, acknowledge=False):
     """Run a read-only collection worker in one Chrome session. item(msg) is called per student.
     Returns {} on success or {'kind', 'error'}. Tests replace this function. Page text is passed to item() only."""
     if os.environ.get("SF_FORBID_BROWSER"):
@@ -790,7 +790,7 @@ def browser_collection_runner(req, item, script, label):
         timer["t"] = threading.Timer(900, proc.kill); timer["t"].daemon = True; timer["t"].start()
     try:
         arm()
-        proc.stdin.write(json.dumps(req) + "\n"); proc.stdin.flush()
+        proc.stdin.write(json.dumps({**req, **({"acknowledge": True} if acknowledge else {})}) + "\n"); proc.stdin.flush()
         for line in proc.stdout:
             try:
                 msg = json.loads(line)
@@ -798,7 +798,18 @@ def browser_collection_runner(req, item, script, label):
                 continue
             arm()
             if "item" in msg:
-                item(msg["item"])
+                try:
+                    item(msg["item"])
+                except jobs.JobCancelled:
+                    if acknowledge:
+                        proc.stdin.write('stop\n'); proc.stdin.flush()
+                        try:
+                            proc.wait(timeout=30)  # allow panel/context cleanup; the child cannot start another student
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                    raise
+                if acknowledge:
+                    proc.stdin.write('continue\n'); proc.stdin.flush()
             elif "ok" in msg:
                 return {} if msg["ok"] else {"kind": msg.get("kind", "error"), "error": msg.get("error", "The class reader failed.")}
         return {"kind": "error", "error": "The " + label + " reader stopped without finishing."}
@@ -862,9 +873,6 @@ def _run_attachment_job(queue, job):
         claimed[nxt['key']]=nxt['idx']
     if not claimed:return
     def item(msg):
-        if queue.cancel_requested(job['id']):
-            # Return pending claims to the queue so cancellation can finish them cleanly.
-            raise jobs.JobFailed('Collection stopped. Completed results remain available.')
         sid=msg.get('student_id')
         if sid not in claimed:return
         idx=claimed.pop(sid)
@@ -874,6 +882,8 @@ def _run_attachment_job(queue, job):
             queue.item_finished(job,idx,sid,'done',result={'attachments':msg})
         else:
             queue.item_finished(job,idx,sid,'failed',error='The collected assignment identity did not match.')
+        if queue.cancel_requested(job['id']):
+            raise jobs.JobCancelled('Collection stopped after the current student. Finished results remain available.')
     run={**req,'students':[s for s in req['students'] if s['student_id'] in claimed]}
     err=ATTACHMENT_RUNNER(run,item)
     if err.get('kind')=='sign_in':raise jobs.NeedsSignIn('Sign in to Microsoft in the app Chrome window, then resume collection.')
@@ -882,7 +892,7 @@ def _run_attachment_job(queue, job):
         queue.item_finished(job,idx,sid,'failed',error='No collection result was returned. Retry this student; no missing-work conclusion was made.')
 
 
-ATTACHMENT_RUNNER = lambda req,item: browser_collection_runner(req,item,'attachment_collect.py','Attachment')
+ATTACHMENT_RUNNER = lambda req,item: browser_collection_runner(req,item,'attachment_collect.py','Attachment',acknowledge=True)
 
 
 def onenote_class_runner(req, item):
@@ -2592,6 +2602,8 @@ class Handler(BaseHTTPRequestHandler):
                         job = QUEUE.cancel(jid)
                     elif action == "resume":
                         job = QUEUE.resume(jid)
+                    elif action == "attachment-imported":
+                        job = QUEUE.mark_attachment_imported(jid, str(body.get("key", "")), body.get("indexes"))
                     elif action == "delivered":
                         job = QUEUE.mark_delivered(jid, [str(k) for k in body.get("keys", [])])
                     else:

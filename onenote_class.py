@@ -178,13 +178,24 @@ def _name_re(name, suffix):
     return re.compile(r"^" + r"\s+".join(re.escape(w) for w in name.split()) + suffix, re.I)
 
 
+def same_notebook(url, base):
+    def key(value):
+        parsed = urllib.parse.urlsplit(value)
+        ident = urllib.parse.parse_qs(parsed.query).get('sourcedoc', [''])[0].strip('{}').casefold()
+        return parsed.scheme, parsed.netloc.casefold(), parsed.path.casefold(), ident
+    first, second = key(url), key(base)
+    return bool(first[3]) and first == second
+
+
 def open_section(page, base, student, section, signin):
-    """Open one student's section the way a person does: notebook, student, section. Returns the frame, or None if the notebook
-    shows no such student or section (or it won't open). Proof that the right section opened is the address OneNote rewrites."""
-    page.goto(notebook_url(base), wait_until="domcontentloaded")
-    page.wait_for_timeout(1500)
-    signin(page, notebook_url(base))
-    f = _until(page, lambda: (lambda fr: fr if fr is not None and fr.get_by_role("treeitem").count() > 3 else None)(_frame(page)), 40)
+    """Reuse the open notebook tree; navigate only when it is unavailable or belongs to another notebook.
+    Opening a section still requires the resolved student and section address to match.
+    """
+    f = _frame(page) if same_notebook(page.url, base) else None
+    if f is None or f.get_by_role('treeitem').count() <= 3:
+        page.goto(notebook_url(base), wait_until="domcontentloaded")
+        signin(page, notebook_url(base))
+        f = _until(page, lambda: (lambda fr: fr if fr is not None and fr.get_by_role("treeitem").count() > 3 else None)(_frame(page)), 40)
     if f is None:
         return None
     items = lambda: _frame(page).locator("[role=treeitem]")
@@ -202,7 +213,8 @@ def open_section(page, base, student, section, signin):
             if _name_re(section, r",\s*Section\b").match(ls[k]):
                 return k
         return None
-    gi = group_at()
+    gi = _until(page, lambda: (group_at(),) if group_at() is not None else None, 8)
+    gi = gi[0] if gi is not None else None
     if gi is None:
         return None
     if section_under(gi) is None and not (gi + 1 < len(labels()) and not is_group(labels()[gi + 1])):

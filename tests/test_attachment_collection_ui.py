@@ -17,7 +17,7 @@ with sync_playwright() as p:
       window.fetch=async(url,options)=>{
         let data;
         if(url.startsWith('/api/assignments/'))data={assignment:{teams:{source}}};
-        else if(options){let body=JSON.parse(options.body);if(url.endsWith('/delivered')){delivered.push(body);data={};}else {requests.push(body);data={job:{id:'collection-1'}};}}
+        else if(options){let body=JSON.parse(options.body);if(url.endsWith('/attachment-imported')){delivered.push(body);data={};}else {requests.push(body);data={job:{id:'collection-1'}};}}
         else if(url.includes('?assignment='))data={jobs:[]};
         else data={job:{id:'collection-1',type:'attachment_collect',state:'completed',items:[{key:'s1',state:'done'},{key:'s2',state:'done'}],drafts:[
           {key:'s1',attachments:{student_id:'s1',name:'Alex Example',target_name:'Example, Alex',source,attachments:[{name:'Work.docx',url:'https://example.org/work',state:'text',text:'EXTRACTED SYNTHETIC WORK',note:'Pictures not read.'}]}},

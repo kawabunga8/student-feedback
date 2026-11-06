@@ -31,6 +31,10 @@ class NeedsSignIn(Exception):
     continues. State: waiting_for_sign_in."""
 
 
+class JobCancelled(Exception):
+    """Stop after preserving the current result; unfinished items become cancelled."""
+
+
 class JobFailed(Exception):
     """Stop the whole job (for example the model engine isn't running). Unfinished items stay queued, so Resume works."""
 
@@ -97,7 +101,16 @@ class JobQueue:
             sidecar = self._sidecar(job)
             res = sidecar.get("results", {})
             job["drafts"] = [{"key": i["key"], "work_sha": i["work_sha"], **res[i["key"]]} for i in items
-                             if i["state"] == "done" and not i["delivered"] and i["key"] in res]
+                             if i["state"] == "done" and (not i["delivered"] or job["type"] == "attachment_collect") and i["key"] in res]
+            if job["type"] == "attachment_collect":
+                # Older clients marked an entire student delivered after importing text. Keep all
+                # source previews visible and treat only their text attachments as already imported.
+                delivered = {i['key'] for i in items if i['delivered']}
+                for result in job['drafts']:
+                    if result['key'] in delivered:
+                        for attachment in result.get('attachments', {}).get('attachments', []):
+                            if attachment.get('state') == 'text':
+                                attachment.setdefault('imported_at', 'legacy delivery')
             job["basis"] = (sidecar.get("request") or {}).get("basis", "")
             job["overwrite"] = bool((sidecar.get("request") or {}).get("overwrite"))
         return job
@@ -142,6 +155,23 @@ class JobQueue:
 
     def _sidecar(self, job):
         return self.read_json(self._sidecar_path(job), {}) or {}
+
+    def mark_attachment_imported(self, jid, key, indexes):
+        job = self.get(jid)
+        if job['type'] != 'attachment_collect' or not isinstance(indexes, list) or not indexes:
+            raise ValueError('Choose text attachments from a collection job.')
+        if not any(i['key'] == key and i['state'] == 'done' for i in job['items']):
+            raise ValueError('The student has no completed collection result.')
+        with self._file_lock:
+            path = self._sidecar_path(job)
+            data = self.read_json(path, {})
+            attachments = data.get('results', {}).get(key, {}).get('attachments', {}).get('attachments', [])
+            if any(type(i) is not int or i < 0 or i >= len(attachments) or attachments[i].get('state') != 'text' for i in indexes):
+                raise ValueError('Only extracted text attachments can be marked imported.')
+            for i in set(indexes):
+                attachments[i].setdefault('imported_at', _now())
+            self.write_json(path, data)
+        return self.get(jid, with_results=True)
 
     def request_of(self, job):
         return self._sidecar(job)
@@ -203,6 +233,10 @@ class JobQueue:
                 self.handlers[job["type"]](self, job)
                 left = self.get(job["id"])["counts"]["queued"]
                 self._finish(job["id"], "cancelled" if left and self.cancel_requested(job["id"]) else "completed")
+            except JobCancelled as e:
+                with self._db() as c:
+                    c.execute("UPDATE items SET state='cancelled' WHERE job_id=? AND state IN ('running','queued')", (job['id'],))
+                self._finish(job['id'], 'cancelled', str(e))
             except NeedsSignIn as e:
                 with self._db() as c:
                     c.execute("UPDATE items SET state='queued' WHERE job_id=? AND state='running'", (job["id"],))

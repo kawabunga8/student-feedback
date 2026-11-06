@@ -31,8 +31,9 @@ try:
     assert result['state']=='completed',result['error']
     assert result['drafts'][0]['attachments']['attachments'][0]['text']=='SYNTHETIC HTTP EVIDENCE'
     assert json.loads(call('/api/jobs?assignment='+rec['id']))['jobs'][0]['id']==job['id']
-    call('/api/jobs/'+job['id']+'/delivered',{'keys':['synthetic-1']})
-    assert json.loads(call('/api/jobs/'+job['id']))['job']['drafts']==[]
+    call('/api/jobs/'+job['id']+'/attachment-imported',{'key':'synthetic-1','indexes':[0]})
+    retained=json.loads(call('/api/jobs/'+job['id']))['job']['drafts']
+    assert retained[0]['attachments']['attachments'][0]['imported_at']
     print('PASS HTTP: script route, page integration, origin protection, queued worker, recoverable evidence and delivery marker')
 finally:
     server.shutdown();app.QUEUE.stop()

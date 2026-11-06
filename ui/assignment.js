@@ -98,6 +98,8 @@
                                     d.feedback.mustAddress.trim() || d.teacherNotes.trim());
 
   let record = null, design = emptyDesign(), sources = {}, teams = null, savedCore = null;
+  let selectionGeneration = 0, sessionGeneration = 0;
+  const ownsSession = (generation, aid) => generation === sessionGeneration && record?.id === aid && sess.aid === aid;
   function currentRecord() {
     const parts = splitRubric($('#rubric').value);
     return {id:record ? record.id : undefined, title:$('#atitle').value.trim(), course:courseKey($('#course').value),
@@ -138,22 +140,28 @@
   pick.onchange = async () => {
     const id = pick.value;
     if(dirty() && !confirm('Discard the unsaved changes to "' + ($('#atitle').value.trim() || 'this assignment') + '"?')) { pick.value = record ? record.id : ''; return; }
+    const selection = ++selectionGeneration;
     await flushSession();
+    if(selection !== selectionGeneration) return;
     if(!id) { newAssignment(); return; }
     let d; try { d = await getJSON('/api/assignments/' + encodeURIComponent(id)); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(selection !== selectionGeneration) return;
     if(d.error) { setNote(d.error, true); pick.value = record ? record.id : ''; return; }
-    await applyRecord(d.assignment);
+    await applyRecord(d.assignment, selection);
   };
   async function save() {
+    const selection = selectionGeneration, owner = record?.id;
     const rec = currentRecord();
     if(!rec.title) { setNote('Add an assignment name before saving.', true); $('#atitle').focus(); return null; }
     const before = record ? record.version : 0;
     let d; try { d = await postJSON('/api/assignments', {assignment:rec, baseVersion:record ? record.version : null}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(selection !== selectionGeneration || owner !== record?.id) return null;
     if(d.conflict && d.current) { showConflict(d.current); await refreshList(); return null; }
     if(d.error) { setNote('Not saved: ' + d.error, true); return null; }
     const firstSave = !record;
     record = d.assignment; savedCore = core(); keep.set('last-assignment', record.id);
     if(sess.aid !== record.id) await attachSession(firstSave); else refreshStatus();
+    if(selection !== selectionGeneration || record?.id !== d.assignment.id) return null;
     const last = (record.history || []).slice(-1)[0] || {}, unsynced = designOutOfSync();
     setNote(record.version === before ? 'Nothing had changed since the last save.' :
       (last.kind === 'created' ? 'Saved on this laptop as version 1.' :
@@ -174,8 +182,9 @@
     let std = {}; const [s] = await Promise.all([getJSON('/api/standards').catch(() => ({})), until(() => courses().length > 0, 10000)]); std = s || {};
     await until(() => Object.keys(stdDocs()).length >= Object.keys(std).length, 3000); await sleep(30);
   })();
-  async function applyRecord(rec) {
+  async function applyRecord(rec, selection = ++selectionGeneration) {
     await ready;
+    if(selection !== selectionGeneration) return;
     if(record?.id !== rec.id) { TEAMS = null; applyTeams(); }
     record = rec; design = normalize(rec.design); sources = {...(rec.sources || {})}; teams = rec.teams || null;
     const notes = [];
@@ -196,6 +205,7 @@
     await attachSession(false);
   }
   function newAssignment() {
+    selectionGeneration++; sessionGeneration++; sess.busy = false;
     TEAMS = null; applyTeams();
     record = null; design = emptyDesign(); sources = {}; teams = null; savedCore = null;
     Object.assign(sess, {aid:'', version:null, path:'', sig:'', hold:false, loaded:false, err:''}); sessNote.replaceChildren(); clearCards();
@@ -933,11 +943,13 @@
   }
   async function saveSession() {
     if(!record || !sess.loaded || sess.busy || sess.hold || sess.aid !== record.id) return;
+    const generation = sessionGeneration, owner = record.id;
     const students = collect(), s = JSON.stringify(students);
     if(s === sess.sig) return;
     if(!students.length && sess.version == null) { sess.sig = s; return; }
     sess.busy = true; let d;
     try { d = await postJSON('/api/session', {assignment:record.id, baseVersion:sess.version, students}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(!ownsSession(generation, owner)) return;
     sess.busy = false;
     if(d.conflict) { sess.hold = true; showSessionConflict(d.current); return; }
     if(d.error) { sess.err = d.error; renderSess(); return; }
@@ -946,9 +958,10 @@
   // The server judges approvals itself, from the saved session and the saved assignment. Ask again after the assignment is saved.
   async function refreshStatus() {
     if(!record || !sess.loaded || sess.aid !== record.id) return;
-    try { const d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); if(!d.error) { sess.status = d.status; renderSess(); } } catch(e) {}
+    const generation = sessionGeneration, owner = record.id;
+    try { const d = await getJSON('/api/session?assignment=' + encodeURIComponent(owner)); if(ownsSession(generation, owner) && !d.error) { sess.status = d.status; renderSess(); } } catch(e) {}
   }
-  async function flushSession() { for(let i = 0; i < 20 && sess.busy; i++) await sleep(100); await saveSession(); }
+  async function flushSession() { const generation = sessionGeneration; for(let i = 0; i < 20 && sess.busy; i++) { await sleep(100); if(generation !== sessionGeneration) return; } if(generation === sessionGeneration) await saveSession(); }
   // Loading an Assessment folder (…/<course>/<assignment folder>) sets this assignment up by itself: it finds the matching Teams
   // assignment in the course's confirmed Teams class (folder "task2-define-ideate" matches "Task 2: Define & Ideate"), reads it,
   // imports its name and instructions, and saves. Read-only in Teams. If anything is unclear it says so and leaves the rest to you.
@@ -974,8 +987,9 @@
     } finally { autoBusy = false; }
   };
   window.feedbackAssignment.saveForPosting = async () => {
+    const generation = sessionGeneration, owner = record?.id;
     await flushSession();
-    return !!record && !dirty() && sess.loaded && !sess.hold && !sess.err && sess.sig === JSON.stringify(collect());
+    return ownsSession(generation, owner) && !!record && !dirty() && sess.loaded && !sess.hold && !sess.err && sess.sig === JSON.stringify(collect());
   };
   function showSessionConflict(cur) {
     sessNote.classList.add('warn');
@@ -986,9 +1000,12 @@
     renderSess();
   }
   async function attachSession(fresh) {                 // fresh: a record just created from this page's own students
-    sess.aid = record.id; sess.hold = false; sess.err = ''; sess.loaded = false; sess.version = null; sess.sig = ''; sessNote.replaceChildren();
+    const generation = ++sessionGeneration, owner = record.id;
+    sess.busy = false;
+    sess.aid = owner; sess.hold = false; sess.err = ''; sess.loaded = false; sess.version = null; sess.sig = ''; sessNote.replaceChildren();
     if(fresh) { sess.loaded = true; renderSess(); return; }
     let d; try { d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(!ownsSession(generation, owner)) return;
     if(d.error) { sess.err = d.error; renderSess(); return; }     // autosave stays off: it must not overwrite a session it couldn't read
     sess.path = d.path; sess.status = d.status;
     if(d.session) { restoreStudents(d.session.students || []); Object.assign(sess, {version:d.session.version, at:d.session.updated}); } else clearCards();
@@ -1021,11 +1038,14 @@
   window.addEventListener('beforeunload', e => { if(record && dirty()) { e.preventDefault(); e.returnValue = ''; } });
   renderDesign(); renderSources(); updateBar();
   (async () => {
+    const selection = selectionGeneration;
     await Promise.all([ready, loadClassMap(), refreshList()]);
+    if(selection !== selectionGeneration) return;
     const last = keep.get('last-assignment');
     if(last) {
       let d = {}; try { d = await getJSON('/api/assignments/' + encodeURIComponent(last)); } catch(e) {}
-      if(d.assignment) { await applyRecord(d.assignment); return; }
+      if(selection !== selectionGeneration) return;
+      if(d.assignment) { await applyRecord(d.assignment, selection); return; }
     }
     renderDesign(); updateBar();
   })();
