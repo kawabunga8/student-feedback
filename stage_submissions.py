@@ -123,13 +123,22 @@ def match_student(filename_stem, roster):
     return None, "no confident roster match"
 
 
+AUTO_SUFFIX = re.compile(r"\s*\((?:Q\d(?:\s*/\s*Q\d)*|full year)\)\s*$", re.I)
+
+
+def base_course_name(name):
+    """A course's name without the quarter suffix the app adds to tell same-named courses apart ("ICT 9 (Q1)" ->
+    "ICT 9"). The term is already its own folder level, so in a path the suffix only split one course's work in two."""
+    return AUTO_SUFFIX.sub("", str(name or "")).strip()
+
+
 def staged_path(year, quarter, course, assignment):
     safe = lambda s: re.sub(r"[\/:*?\"<>|]", "-", s.strip())
     return (
         ASSESSMENT
         / safe(str(year))
         / f"Q{quarter}"
-        / safe(course)
+        / safe(base_course_name(course))
         / safe(assignment)
     )
 

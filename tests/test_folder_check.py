@@ -20,7 +20,7 @@ old_rel = s["path"]
 
 rec = app.save_assignment_record({**app.load_assignment_record(aid), "course": {"name": "CS10 (Q1/Q2)", "label": "CS10 (Q1/Q2)", "schoolYear": "2026-27"}}, rec["version"])
 s = app.load_session(aid)
-check("2 after the course changes, the old folder is flagged with have and want", s["folderCheck"] == {"have": "2026-27/Q1/ICT 9 (Q1)", "want": "2026-27/Q1/CS10 (Q1 Q2)"}, s["folderCheck"])
+check("2 after the course changes, the old folder is flagged with have and want", s["folderCheck"] == {"have": "2026-27/Q1/ICT 9", "want": "2026-27/Q1/CS10"}, s["folderCheck"])
 
 # a job sidecar must move with the folder
 j = app.QUEUE.enqueue("onenote_read", aid, old_rel, {"url": "x"}, [{"key": "collect", "work_sha": ""}])
@@ -29,7 +29,7 @@ except ValueError: blocked = True
 check("3a a move is refused while a job for the assignment is active", blocked and (app.ASSESSMENT / old_rel).exists())
 with app.QUEUE._db() as c: c.execute("UPDATE jobs SET state='completed'")
 out = app.move_session(aid)
-check("3 the move reports the new path and the old folder is gone", out["moved"] and out["path"] == "2026-27/Q1/CS10 (Q1 Q2)/" + old_rel.split("/")[-1] and not (app.ASSESSMENT / old_rel).exists(), out)
+check("3 the move reports the new path and the old folder is gone", out["moved"] and out["path"] == "2026-27/Q1/CS10/" + old_rel.split("/")[-1] and not (app.ASSESSMENT / old_rel).exists(), out)
 s = app.load_session(aid)
 check("4 the students come back from the new folder and nothing is flagged", s["folderCheck"] is None and [x["name"] for x in s["session"]["students"]] == ["Ada Test"])
 check("5 the job record follows (journal and sidecar)", app.QUEUE.get(j["id"])["folder"] == out["path"] and (app.ASSESSMENT / out["path"] / ".jobs" / (j["id"] + ".json")).exists())
@@ -40,7 +40,7 @@ rec2 = app.save_assignment_record({"title": "Other", "term": "Q1", "course": {"n
 app.save_session(rec2["id"], [{"student_id": "s2", "name": "Bo Test", "work": "w"}], None)
 r2 = app.save_assignment_record({**app.load_assignment_record(rec2["id"]), "course": {"name": "CS10 (Q1/Q2)", "label": "CS10 (Q1/Q2)", "schoolYear": "2026-27"}}, rec2["version"])
 rel2 = app.load_session(rec2["id"])["path"]
-(app.ASSESSMENT / "2026-27/Q1/CS10 (Q1 Q2)" / rel2.split("/")[-1]).mkdir(parents=True)
+(app.ASSESSMENT / "2026-27/Q1/CS10" / rel2.split("/")[-1]).mkdir(parents=True)
 try: app.move_session(rec2["id"]); refused = False
 except ValueError as e: refused = "already exists" in str(e)
 check("7 an existing target folder is refused and nothing moves", refused and (app.ASSESSMENT / rel2).exists())

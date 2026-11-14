@@ -79,7 +79,7 @@ with sync_playwright() as p:
     m = manifest()
     check("4 manifest.json written in the Assessment folder", m is not None and len(m["students"]) == 2, find_manifests())
     rel = os.path.relpath(find_manifests()[0], AS)
-    check("  path is year/term/course/assignment", rel == "2026-27/Q1/ICT 9 (Q1)/Task 2 Define Ideate/manifest.json".replace("Define Ideate", "Define   Ideate".replace("   ", " & ")) or rel.startswith("2026-27/Q1/ICT 9 (Q1)/Task 2"), rel)
+    check("  path is year/term/course/assignment", rel == "2026-27/Q1/ICT 9/Task 2 Define Ideate/manifest.json".replace("Define Ideate", "Define   Ideate".replace("   ", " & ")) or rel.startswith("2026-27/Q1/ICT 9/Task 2"), rel)
     s0 = [s for s in m["students"] if s["student_id"] == "CH-2"][0]
     check("  stores work, notes, level, feedback, comment, approval, tick", s0["work"].startswith("Bea's HMW") and s0["notes"] == "note for Bea" and s0["level"] == "Developing"
           and s0["feedback"] == fb0 and s0["myschool_comment"].startswith("Developing") and s0["approval"] and s0["posting"]["teams"] and s0["posting"]["myschool"] is None, {k: (str(v)[:30]) for k, v in s0.items()})

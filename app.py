@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import feedback as fb
 import class_patterns as cpat
+from stage_submissions import base_course_name
 import hashlib
 import sys
 import myschool_post
@@ -335,7 +336,7 @@ def session_folder(aid, rec):
     if not rel:
         course = rec.get("course") or {}
         rel = "/".join([_folder_part(course.get("schoolYear"), "unsorted"), _folder_part(rec.get("term"), "no term"),
-                        _folder_part(course.get("label") or course.get("name"), "no course"), _folder_part(rec.get("title"), aid)])
+                        _course_part(course), _folder_part(rec.get("title"), aid)])
         taken = {v.lower() for k, v in index.items() if k != aid}
 
         def other_owner(r):      # another assignment already uses this folder (by index, or by the manifest inside it)
@@ -361,17 +362,26 @@ def load_session(aid):
     return {"path": rel, "session": s, "status": session_status(s, rec) if s else None, "folderCheck": folder_check(rec, rel)}
 
 
-def _wanted_parent(rec):
+def _course_part(course, old=False):
+    """The course level of an Assessment path: the course without the app's quarter suffix, since the term is the level
+    above ("ICT 9", not "ICT 9 (Q1)"). old=True gives the form used before 2026-11-14, which folder_check still accepts."""
+    name = course.get("label") or course.get("name")
+    return _folder_part(name if old else base_course_name(name), "no course")
+
+
+def _wanted_parent(rec, old=False):
     course = rec.get("course") or {}
     return "/".join([_folder_part(course.get("schoolYear"), "unsorted"), _folder_part(rec.get("term"), "no term"),
-                     _folder_part(course.get("label") or course.get("name"), "no course")])
+                     _course_part(course, old)])
 
 
 def folder_check(rec, rel):
     """None when the folder sits under the assignment's own year/term/course; else {have, want}. The folder is fixed when the
-    session is first saved, so a record whose course or term changed later would otherwise keep its old class's folder unseen."""
+    session is first saved, so a record whose course or term changed later would otherwise keep its old class's folder unseen.
+    Folders named the old way (course with its quarter suffix) still count as in place."""
     have, want = "/".join(rel.split("/")[:3]), _wanted_parent(rec)
-    return None if have.casefold() == want.casefold() else {"have": have, "want": want}
+    ok = {want.casefold(), _wanted_parent(rec, old=True).casefold()}
+    return None if have.casefold() in ok else {"have": have, "want": want}
 
 
 def move_session(aid):
@@ -1827,16 +1837,32 @@ def _classify(name, grades, rules):
     return {"department": ""}
 
 
+def hub_error(code, what, retry=None):
+    """What a Course Hub refusal means, in words a teacher can act on. No trailing full stop: callers add to it."""
+    if code == 401:
+        return "Course Hub didn't accept student-feedback's API key (401). Check COURSE_HUB_API_KEY in student-feedback's .env.local"
+    if code == 403:
+        return (f"student-feedback's Course Hub key isn't allowed to read the {what} (403). "
+                "Add that endpoint to its entry in Course Hub's COURSE_HUB_API_KEYS")
+    if code == 429:
+        return ("Course Hub is pausing requests from this Mac after too many failed key attempts (429), possibly from "
+                "another app. " + (f"Try again in {retry} seconds" if retry else "Try again in a minute"))
+    if code >= 500:
+        return f"Course Hub had an internal error reading the {what} ({code}). Check Course Hub's log"
+    return f"Course Hub answered {code} for the {what}"
+
+
 def hub_get(path):
     base, key = hub_settings()
     if not key:
         raise RuntimeError("COURSE_HUB_API_KEY is not set (see README)")
+    what = "class list" if path.split("?")[0].endswith("/roster") else "course list" if path.startswith("/api/courses") else "quarters"
     req = urllib.request.Request(base + path, headers={"Authorization": f"Bearer {key}"})
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Course Hub answered {e.code} for {path.split('?')[0].rsplit('/', 1)[0] if 'roster' in path else path.split('?')[0]}")
+        raise RuntimeError(hub_error(e.code, what, e.headers.get("Retry-After")))
     except (urllib.error.URLError, OSError):
         raise RuntimeError(f"Can't reach Course Hub at {base}")
 
@@ -1849,6 +1875,10 @@ def fetch_from_course_hub(rules):
     school_year = quarters[0]["school_year"] if quarters else ""
     sy = f"school_year={school_year}&" if school_year else ""
     sections = get(f"/api/courses?{sy}quarter=all&type=academic")
+    if not sections:   # e.g. from July 1 Course Hub moves to a year not set up yet: keep the last good copy instead
+        raise RuntimeError(f"Course Hub has no courses for {school_year or 'the new school year'} yet")
+    if not school_year:   # quarters not entered yet: the courses still say which year they belong to
+        school_year = next((c["school_year"] for c in sections if c.get("school_year")), "")
 
     grouped = {}  # (name, quarters) -> sections: blocks of one course merge; "ICT 9" Q1 and Q2 stay apart
     for c in sections:
@@ -1907,13 +1937,31 @@ def _course_data():
         return cfg
 
 
+def find_course(courses, course_name, qn=None):
+    """By the name the page shows ("ICT 9 (Q1)"); else by the plain course name ("ICT 9"), using the quarter to choose
+    between same-named courses. None if nothing matches; an error if the choice is still ambiguous."""
+    exact = [c for c in courses if c["name"] == course_name]
+    if exact:
+        return exact[0]
+    want = base_course_name(course_name).casefold()
+    same = [c for c in courses if base_course_name(c["name"]).casefold() == want]
+    if len(same) > 1 and qn is not None:
+        same = [c for c in same if not c.get("quarters") or qn in c["quarters"]]
+    if len(same) > 1:
+        raise RuntimeError(f"“{course_name}” could be {' or '.join(c['name'] for c in same)}. Use one of those names, or give the quarter")
+    return same[0] if same else None
+
+
 def roster_for(course_name, quarter=""):
     """Students in a course from Course Hub. In memory only: never cached or written to disk.
     Returns only what the page needs (no email, no gender)."""
-    course = next((c for c in course_data().get("courses", []) if c["name"] == course_name), None)
-    if not course or not course.get("sections"):
-        raise RuntimeError("Class list needs live course data from Course Hub.")
+    data = course_data()
     qn = int(quarter) if str(quarter).isdigit() else None
+    course = find_course(data.get("courses", []), course_name, qn)
+    if not course:
+        raise RuntimeError(f"“{course_name}” isn't in Course Hub's course list for {data.get('school_year') or 'this year'}")
+    if not course.get("sections"):
+        raise RuntimeError("Class lists need live course data from Course Hub; the built-in course list has no class sections")
     secs = [s for s in course["sections"] if qn is None or not s["quarters"] or qn in s["quarters"]] or course["sections"]
     seen, out = set(), []
     for sec in secs:
