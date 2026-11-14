@@ -119,12 +119,27 @@ def tab_names(page, s, name):
     """The names listed under one roster tab, once its rows add up to the tab's own count; None if that never happens."""
     show_tab(s.frame(), page, name)
     end = time.time() + 25
+    empty_reads = 0
     while time.time() < end:
-        got = T.parse_roster_students(s.text())
+        text = s.text()
+        got = T.parse_roster_students(text)
         if got['complete']:
             return {r['name'].strip().lower() for r in got['students']}
+        # A tab nobody is in (e.g. 'Returned (0)' before anything is returned) prints no column headings at all.
+        # It counts as read, and empty, only when that tab's own label says 0 and it stays that way for several reads.
+        empty_reads = empty_reads + 1 if empty_tab(text, name, got) else 0
+        if empty_reads >= 3:
+            return set()
         page.wait_for_timeout(700)
     return None
+
+
+def empty_tab(text, name, parsed):
+    """True when the roster shows no rows because the tab called `name` really has none: its own label reads '(0)' and the
+    parser found no rows only for lack of column headings (not because the list is half loaded)."""
+    if parsed.get('complete') or 'column headings' not in (parsed.get('why') or ''):
+        return False
+    return any(re.match(r'^' + re.escape(name) + r' \(0\)$', l.strip(), re.I) for l in (text or '').splitlines())
 
 
 def saved_feedback(page, f, name, req, submission_id):

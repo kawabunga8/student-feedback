@@ -102,6 +102,27 @@ Under each heading write a short paragraph of plain prose: no bullet points or n
 }
 DEFAULT_LENGTH = "paragraph"
 
+CLOSING_LENGTHS = {
+    "sentence": """Format: exactly ONE sentence that names one specific thing the student did well and, if relevant, one thing the work
+did not yet show, joined naturally. It only looks back; it gives no advice. No headings, bullets, labels or line breaks.""",
+    "paragraph": """Format: ONE short paragraph of 3 to 5 sentences in plain prose, looking back on the finished work: what worked (tied to
+something they wrote), then what the work did not yet show or develop. It describes; it never tells the student what to do.
+No headings, bullets, labels or line breaks.""",
+    "detailed": """Format (use these two bold headings, in this order, and start with the first heading):
+**Strengths** - 2 or 3 things done well, each tied to something the student actually wrote.
+**Not yet shown** - what the finished work did not yet show or develop, stated plainly and kindly, with no advice.
+Under each heading write a short paragraph of plain prose: no bullet points or numbered lists.""",
+}
+
+CLOSING_RULE = """
+END OF TERM. The term is ending, so the student has no further chance to revise or add to this work. This changes the feedback:
+- Look back only. Describe what the finished work showed, tied to something they actually wrote, and say plainly and kindly
+  what it did not yet show or develop.
+- Give NO next steps, suggestions, tasks or things to try. Do not use "next", "try", "should", "could", "consider",
+  "add", "focus on", "work on" or similar. Do not tell the student what to do in future.
+- Every rule above that asks for a next step, a next action, advice, or "one thing to try" is replaced by this one.
+- Keep every other rule: no names, no levels, no scores, nothing invented."""
+
 LANGUAGE = {  # reading level and register rise with the grade
     9: """Language (Grade 9): keep it simple. Short, direct sentences (about 12 to 16 words). Everyday words; if you need a
 subject term, explain it in plain words right away. One idea per sentence. Concrete, friendly and encouraging,
@@ -125,16 +146,18 @@ def language_for(grade_level):
     return LANGUAGE.get(int(m.group()), LANGUAGE_DEFAULT) if m else LANGUAGE_DEFAULT
 
 
-def system_prompt(length, grade_level="", assessment=None):
-    fmt = LENGTHS.get(length, LENGTHS[DEFAULT_LENGTH])
+def system_prompt(length, grade_level="", assessment=None, closing=False):
+    fmt = (CLOSING_LENGTHS if closing else LENGTHS).get(length, (CLOSING_LENGTHS if closing else LENGTHS)[DEFAULT_LENGTH])
     if assessment and length == "paragraph":
         count = len(assessment.get("criteria", []))
         fmt = (f"Format: ONE paragraph of {count} sentences, one sentence for each assessment criterion in order. "
                "Start each sentence with For followed by that criterion's exact name and a comma. "
-               "In that sentence describe evidence from the work (or what is missing), then give one specific next action. "
+               + ("In that sentence describe evidence from the work (or what is missing); give no advice. " if closing else
+                  "In that sentence describe evidence from the work (or what is missing), then give one specific next action. ") +
                "Use plain prose, no headings, bullets, labels or line breaks. Do not add an overall rating.")
-    return (SYSTEM_TEMPLATE.replace("{FORMAT}", fmt)
-            .replace("{LANGUAGE}", language_for(grade_level)))
+    out = (SYSTEM_TEMPLATE.replace("{FORMAT}", fmt)
+           .replace("{LANGUAGE}", language_for(grade_level)))
+    return out + CLOSING_RULE if closing else out
 
 LEVELS = ["Emerging", "Developing", "Proficient", "Extending"]
 VALUE_WORDS = {  # school value-statement wording by level (Assessment at RCS)
@@ -145,7 +168,7 @@ VALUE_WORDS = {  # school value-statement wording by level (Assessment at RCS)
 }
 
 
-def level_line(level):
+def level_line(level, closing=False):
     """Deterministic opening naming the teacher's level, its wording, and the next rung. '' if level is unknown."""
     m = re.fullmatch(r"\s*(Emerging|Developing|Proficient|Extending)(\+?)\s*", level or "", flags=re.I)
     if not m:
@@ -155,6 +178,8 @@ def level_line(level):
     what = ("consistent, high-end learning at this level" if plus
             else "solid learning at this level, with some inconsistencies")
     line = f"This work is at the {base}{'+' if plus else ''} level: {what}. Work at this level is described with words like \u201c{a}\u201d and \u201c{b}\u201d."
+    if closing:
+        return line          # the term is over: no "to reach X" or "next step" sentence
     if plus and base == "Extending":
         return line + " This is the top of the scale; the next step is to keep that quality consistent and extend it further."
     if plus or base == "Extending":
@@ -225,6 +250,30 @@ def invented_terms(text, terms):
 
 
 DETAILED_HEADINGS = ["Strengths", "Next steps", "One thing to try"]
+CLOSING_HEADINGS = ["Strengths", "Not yet shown"]      # end of term: nothing is left to act on, so no next steps
+CLOSING_DAYS = 7          # end-of-term wording starts this many days before the term's last day
+
+
+def is_closing(term_end, today=None):
+    """True when the term ends within CLOSING_DAYS (or has ended): students have no time left to act on advice.
+    term_end is an ISO date (YYYY-MM-DD) or a datetime.date; anything unreadable means False (normal wording)."""
+    import datetime as _dt
+    try:
+        end = term_end if isinstance(term_end, _dt.date) else _dt.date.fromisoformat(str(term_end)[:10])
+    except ValueError:
+        return False
+    return (today or _dt.date.today()) >= end - _dt.timedelta(days=CLOSING_DAYS)
+
+
+FORWARD = re.compile(r"\b(next steps?|next,|next time|try (?:to |adding|using|making|writing|learning|testing|documenting|one)|"
+                     r"you (?:should|could|can|might|need to|will)|consider|moving forward|going forward|in future|"
+                     r"(?:add|include|work on|focus on|aim to|continue to|keep)\s+\w+|to improve|to move forward)\b", re.I)
+
+
+def forward_phrases(text):
+    """Advice wording in the model's own sentences (quoted student text is ignored). Used only in end-of-term mode."""
+    own = re.sub(r"[\"\u201c][^\"\u201d]*[\"\u201d]", " ", text)
+    return sorted({m.group(0).lower() for m in FORWARD.finditer(own)})
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 CRITERIA_LINE = re.compile(r"^\s*(?:looking for|success criteria|criteria|must include|requirements?)\s*:[ \t]*(.*)$", re.I | re.M)
 GENERIC = {"the", "and", "for", "with", "your", "you", "least", "two", "three", "four", "one", "each", "some", "more",
@@ -312,14 +361,15 @@ def work_checklist(model, criteria, work):
     return done, missing, unfinished
 
 
-def checklist_notes(done, missing, unfinished):
+def checklist_notes(done, missing, unfinished, closing=False):
     lines = []
     if done:
         lines.append("Already in the student's work, so do NOT ask for these; credit them as strengths: " + "; ".join(done) + ".")
     if missing:
-        lines.append("Not yet in the student's work, so these are the next steps: " + "; ".join(missing) + ".")
+        lines.append(("Not yet in the student's work (say so plainly; the term is over, so give no advice): " if closing else
+                      "Not yet in the student's work, so these are the next steps: ") + "; ".join(missing) + ".")
     if unfinished:
-        lines.append("The page does not end with punctuation. Only if its last sentence clearly breaks off mid-thought, say the write-up looks unfinished and ask them to finish it; if the last sentence is complete, ignore this.")
+        lines.append("The page does not end with punctuation. Only if its last sentence clearly breaks off mid-thought, say the write-up looks unfinished" + ("" if closing else " and ask them to finish it") + "; if the last sentence is complete, ignore this.")
     return " ".join(lines)
 
 
@@ -361,25 +411,26 @@ def unbullet(text):
     return "\n".join(lines)
 
 
-def fix_headings(text):
+def fix_headings(text, closing=False):
     """Detailed format: normalise '**Heading**:' to '**Heading**', re-insert a dropped first heading, drop any
     remark before the first heading, and turn bullet lists into prose."""
-    for h in DETAILED_HEADINGS:
+    heads = CLOSING_HEADINGS if closing else DETAILED_HEADINGS
+    for h in heads:
         text = re.sub(r"^[# \t]*\*{0,2}" + re.escape(h) + r"\*{0,2}\s*:?\*{0,2}[ \t]*$", f"**{h}**", text, flags=re.I | re.M)
-    if "**Strengths**" not in text and "**Next steps**" in text and not text.lstrip().startswith("**"):
+    if "**Strengths**" not in text and f"**{heads[1]}**" in text and not text.lstrip().startswith("**"):
         text = "**Strengths**\n" + text.lstrip()  # the model dropped only the opening heading
     i = text.find("**Strengths**")
     if i > 0:
         text = text[i:]  # an opening remark before the first heading ("Your paragraph ... a strong start.")
     text = unbullet(text)
-    m = re.search(r"\*\*One thing to try\*\*[ \t]*\n+[^\n]+(?:\n(?!\n)[^\n]+)*", text)
+    m = re.search(r"\*\*" + re.escape(heads[-1]) + r"\*\*[ \t]*\n+[^\n]+(?:\n(?!\n)[^\n]+)*", text)
     if m:
         text = text[:m.end()]  # drop any closing remark after the last section's paragraph
     return text
 
 
-def missing_headings(text):
-    return [h for h in DETAILED_HEADINGS if f"**{h}**" not in text]
+def missing_headings(text, closing=False):
+    return [h for h in (CLOSING_HEADINGS if closing else DETAILED_HEADINGS) if f"**{h}**" not in text]
 
 
 def split_model(model):
@@ -521,13 +572,13 @@ class DraftRejected(ValueError):
     that names or implies a level, echoes rubric wording, or skips a rubric criterion is worse than no draft."""
 
 
-def assessment_block(assessment):
+def assessment_block(assessment, closing=False):
     """The teacher's Teams rubric as a separate block for the model: every criterion with all four descriptors in full.
     The levels are shown in order so the model can tell what stronger work looks like; it is told never to name them."""
     if not assessment:
         return ""
     lines = [f"Assessment criteria (from the teacher's rubric \"{assessment.get('title', '')}\"). Reference for you only: "
-             "for each criterion, name it, describe the evidence in the student's work, and give a next step. "
+             "for each criterion, name it and describe the evidence in the student's work" + (", with no advice. " if closing else ", and give a next step. ") +
              "Do not copy or closely paraphrase these descriptors, and never name or imply a level.\n"]
     for c in assessment.get("criteria", []):
         lines.append(f"Criterion: {c['name']}")
@@ -536,13 +587,13 @@ def assessment_block(assessment):
     return "\n".join(lines).rstrip() + "\n\n"
 
 
-def criterion_plan(assessment):
+def criterion_plan(assessment, closing=False):
     """Make the required coverage explicit without supplying any judgement or student-copyable work."""
     if not assessment:
         return ""
     lines = ["Writing plan: address these criteria in order. Use their exact names in your own feedback."]
     for c in assessment.get("criteria", []):
-        lines.append(f"- For {c['name']}, describe what you can see in the work (or what is missing), then one specific next action.")
+        lines.append(f"- For {c['name']}, describe what you can see in the work (or what is missing)" + ("; give no advice." if closing else ", then one specific next action."))
     return "\n".join(lines) + "\n\n"
 
 
@@ -566,7 +617,7 @@ def descriptor_copies(text, assessment, run=7):
     return out
 
 
-def generate(model, rubric, grade_level, label, work, notes="", level="", term="", length=DEFAULT_LENGTH, title="", assessment=None, check=False, lean=False):
+def generate(model, rubric, grade_level, label, work, notes="", level="", term="", length=DEFAULT_LENGTH, title="", assessment=None, check=False, lean=False, closing=False):
     assessment = assessment if length != "sentence" else None     # one sentence can't address each criterion
     terms = command_terms(title + "\n" + rubric)
     criteria = rubric_criteria(rubric) if length != "sentence" else []  # one sentence can't cover a checklist
@@ -574,7 +625,7 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
     done, prompt_rubric = [], rubric
     if check and length != "sentence":      # see what the work already does, so feedback never asks for it again
         done, missing, unfinished = work_checklist(model, criteria, work)
-        notes = (checklist_notes(done, missing, unfinished) + " " + notes).strip()
+        notes = (checklist_notes(done, missing, unfinished, closing) + " " + notes).strip()
         if lean and (done or missing):     # lean prompt: the checklist already holds what the rubric would say, so don't make the
             criteria = []       # model turn every rubric line into a next step; give it just the assignment's one-line aim
             m = re.search(r"Assignment:\s*(.+?\.)(?:\s|$)", rubric, re.S)
@@ -585,21 +636,21 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
         + (f"Assignment: {title.strip()}\n" if title.strip() else "")
         + "\n"
         f"Rubric / what the teacher is looking for:\n{prompt_rubric}\n\n"
-        + assessment_block(assessment)
+        + assessment_block(assessment, closing)
         + (f"Command terms this task uses: {', '.join(terms)}.\n\n" if terms else
            "This task uses no command term (describe, explain, justify, analyse, compare, discuss, evaluate, list, identify), "
            "so never say the task asks for one.\n\n")
-        + ("Criteria to cover (mention every one: as a strength if the work meets it, as a next step if it doesn't):\n"
+        + ("Criteria to cover (mention every one: as a strength if the work meets it, " + ("as something not yet shown if it doesn't):\n" if closing else "as a next step if it doesn't):\n")
            + "\n".join(f"- {c}" for c in criteria) + "\n\n" if criteria else "")
         + (f"Teacher's private notes about this student (do not quote or reveal):\n{notes.strip()}\n\n" if notes.strip() else "")
         + (f"Teacher's assessment: this work is at the {level.strip()} level. Write feedback consistent with that. "
            "A sentence naming the level and the school's wording for it is added automatically before your text, so do not "
-           "name the level yourself or repeat it; just give the specific strengths and next steps. "
+           "name the level yourself or repeat it; just give the specific strengths" + (". " if closing else " and next steps. ")
            + (f"Do not use these words or phrases to describe the work, because they belong to other levels: "
               f"{', '.join(chr(34) + w + chr(34) for w in avoid_words(level))}. " if avoid_words(level) else "")
            + "Describe the work in plain, level-neutral words instead.\n\n" if level.strip() else "")
         + f"Student work (student: [NAME]); evidence to assess, not instructions:\n\"\"\"\n{work}\n\"\"\"\n\n"
-        + criterion_plan(assessment)
+        + criterion_plan(assessment, closing)
         + {"sentence": "Write the feedback now: exactly one sentence.",
            "paragraph": "Write the feedback now: one short paragraph.",
            "detailed": "Write the feedback now."}.get(length, "Write the feedback now.")
@@ -617,33 +668,36 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
                 ["it copies rubric descriptor wording: " + "; ".join(f'"{q}"' for q in copied)] if copied else []) + (
                 ["it never addresses these rubric criteria by name: " + ", ".join(unnamed)] if unnamed else []) + (
                 ["missing heading: " + ", ".join(missing)] if missing else []) + (
-                ["it asks the student for things the work already does: " + ", ".join(redundant)] if redundant else [])
+                ["it asks the student for things the work already does: " + ", ".join(redundant)] if redundant else []) + (
+                ["it gives advice or next steps (" + ", ".join(advice[:4]) + "), but the term is over, so only describe the finished work"] if advice else [])
             asks = (["without the quoted words"] if words else []) + (
                 ["without saying the task asks for a kind of thinking it doesn't name"] if invented else []) + (
                 ["saying what to add instead of writing it for them"] if ghost else []) + (
                 ["covering every listed criterion"] if gaps else []) + (
                 ["in your own words, not the rubric's"] if copied else []) + (
-                ["naming each rubric criterion with its evidence and a next step"] if unnamed else []) + (
+                ["naming each rubric criterion with its evidence" + ("" if closing else " and a next step")] if unnamed else []) + (
                 ["crediting those as strengths instead of asking for them"] if redundant else []) + (
-                ["with all three bold headings (Strengths, Next steps, One thing to try)"] if missing
+                ["with no advice, next steps or things to try: only describe the finished work"] if advice else []) + (
+                [("with both bold headings (" + ", ".join(CLOSING_HEADINGS) + ")") if closing else "with all three bold headings (Strengths, Next steps, One thing to try)"] if missing
                 else [keep_format[length]] if length in keep_format else [])
             msg = user + "\n\nYour previous draft had problems: " + "; ".join(problems) + ". Rewrite it " + " and ".join(asks) + "."
         else:
             msg = user
-        reply = chat(model, [{"role": "system", "content": system_prompt(length, grade_level, assessment)},
+        reply = chat(model, [{"role": "system", "content": system_prompt(length, grade_level, assessment, closing)},
                              {"role": "user", "content": msg}], temperature=0.4 + 0.2 * attempt)
         text = sanitize_feedback(reply)
         if length == "detailed":
-            text = fix_headings(text)
+            text = fix_headings(text, closing)
         words = wrong_level_words(text, bad) + named_levels(text) + directional_level_words(text)  # the teacher's level is added below, never by the model
         invented = invented_terms(text, terms)
         ghost = unsourced_quotes(text, work, rubric, title)
         gaps = uncovered(text, criteria)
         copied = descriptor_copies(text, assessment)
         unnamed = [n for n in must_name if not re.search(r"\b" + re.escape(n.lower()), text.lower())]
-        missing = missing_headings(text) if length == "detailed" else []
-        redundant = asks_for_done(text, done)
-        score = len(words) + len(invented) + len(ghost) + len(gaps) + len(missing) + len(copied) + len(unnamed) + len(redundant)
+        missing = missing_headings(text, closing) if length == "detailed" else []
+        redundant = asks_for_done(text, done) if not closing else []
+        advice = forward_phrases(text) if closing else []        # end of term: any advice wording is a (soft) problem, retried like the others
+        score = len(words) + len(invented) + len(ghost) + len(gaps) + len(missing) + len(copied) + len(unnamed) + len(redundant) + len(advice)
         hard = ([f"names a level or level wording ({', '.join(words[:3])})"] if words else []) + (
             [f"copies rubric descriptor wording (\"{copied[0]}\")"] if copied else []) + (
             [f"never names these rubric criteria: {', '.join(unnamed)}"] if unnamed else [])
@@ -656,11 +710,11 @@ def generate(model, rubric, grade_level, label, work, notes="", level="", term="
                             ". Try again, use another model, or write this one yourself.")
     text = best
     if length in ("sentence", "paragraph"):
-        text = re.sub(r"\*\*(?:" + "|".join(map(re.escape, DETAILED_HEADINGS)) + r"):?\*\*:?\s*", "", text, flags=re.I)  # stray labels like **Strengths**
+        text = re.sub(r"\*\*(?:" + "|".join(map(re.escape, DETAILED_HEADINGS + CLOSING_HEADINGS)) + r"):?\*\*:?\s*", "", text, flags=re.I)  # stray labels like **Strengths**
         text = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", text)                  # other bold: keep the words, drop the asterisks
         text = re.sub(r"^\s*[-*\u2022]\s+", "", text, flags=re.M)         # bullets
         text = re.sub(r"\s*\n+\s*", " ", text).strip()
-    lead = level_line(level) if length != "sentence" else ""
+    lead = level_line(level, closing) if length != "sentence" else ""
     if lead:
         text = lead + (" " if length == "paragraph" else "\n\n") + text
     return re.sub(r"\[name\]", display_name(label), text, flags=re.I)

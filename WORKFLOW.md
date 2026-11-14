@@ -11,7 +11,7 @@ Build small working prototypes, verify one real case, then refine. The dated log
 | Create unpublished MySchool assignment | Built: load courses, choose type/date/outcomes, preview, explicit Save and read-back. 32 synthetic checks pass. Live course loading works; live Save awaits a teacher-selected due date. |
 | Create unpublished Teams draft | Built: Design preview, explicit confirmation, background creation and Drafts read-back. One invented Senior Band draft saved and checked live after recovering its empty trial draft. Publishing, dates, attachments and rubric creation are not automated. |
 | Teams assignment/rubric reader | Wording/counts verified on Task 4 and Graphics Design Challenge; rubric descriptors verified on the latter only. Attachments are listed, not read. |
-| Typed OneNote collection | One short typed page verified through the app, including save/reopen. Up to 40 pasted page addresses and roster matching are built and synthetic-tested; broader live collection is unverified. Whole-class collection by title guessing (`onenote_class.py`) is built and unit-tested; live check 2026-11-03: a known page (Task 2 "Define and ideate") was found, but 0 of 3 students had a page matching any of 20 guessed Task 3 titles, at about 6 s per title tried. |
+| Typed OneNote collection | One short typed page verified through the app, including save/reopen. Up to 40 pasted page addresses and roster matching are built and synthetic-tested; broader live collection is unverified. Whole-class collection (`onenote_class.py`) now reads each student's real page list first and falls back to title guessing only when the list can't be read (29 checks). Live check 2026-11-04, ICT 9 Q1 Task 3: 8 students in 78 s, 7 found (the eighth genuinely has no page); across the class 12 of 28 had a Task 3 page. Earlier live check 2026-11-03: title guessing found 0 of 3 Task 3 pages at about 6 s per title. |
 | Forms file import | One real English quiz export verified through parser and temporary upload UI: one response, 11 question blocks, score separate and no level assigned. Direct Forms web import and image/file answers are not built. |
 | Per-student Teams statuses and Class overview | Built; the status read now includes the Returned tab. Posted marks are per destination and set by a verified post; the overview shows progress for Teams and MySchool separately. Live-checked on Task 2 (26 To return + Returned). |
 | Teams posting (one student or the class) | One-session engine (`teams_batch.py`): reads the roster once, skips students already Returned, flags unmatched names, posts and Returns each approved student, and verifies from the Returned tab plus a read-back of the feedback Teams kept. **Verified live on 2026-11-03: 18 students, ICT 9 Q1 Task 2.** Not verified: what a Return sends the student, other assignment layouts. |
@@ -23,6 +23,10 @@ Mandatory review remains in place. Posting to Teams and MySchool is one student 
 **Validation:** the 17-file Mac run had 586 passes and two UI failures; MySchool and Teams statuses passed separately (44/44 and 29/29), covering 591 checks across runs. This was not a clean combined pass. The newer overview/vision tests are recorded separately below; earlier cloud counts do not establish a Mac pass.
 
 **Next milestone:** repeat the verified Teams-and-MySchool flow on a second assignment type (several criteria, a different Teams layout) and on a second class; read the work of the ten roster students with no submission; keep the model-consistency, broader-collection and image-transcription items open. Two assignments' live runs are the evidence so far: do not treat them as covering every layout.
+
+## Current repository skills — 2026-11-04
+
+Use the maintained workflows linked from [README.md](README.md#reusable-agent-skills): `phase-a-collect-and-draft`, `phase-b-upload`, `rcs-teams-and-myschool-access`, and `push-laptop-repo-to-github`. All four now live under `skills/<name>/SKILL.md` and can be read by Codex or Claude. Phase B uses current server-validated review records and the app's posting workers, replacing the old `HOLD`/feedback-file convention. The three formerly absent skills are new repository versions based on the current implementation, not recovered account-only originals. Historical notes below about missing skill copies, draft-only Phase B and account-specific tooling are superseded by this section.
 
 ## Historical handoff notes (2026-10-30)
 
@@ -777,3 +781,23 @@ Live read-only inspection identified the course/type radios, ISO due-date input,
 - *A mistake worth recording*: filling in the MySchool comments changed every student's reviewed values and silently voided the nine Teams "posted" marks, so the overview said 0 done. Marks now ignore fields the destination never receives.
 
 **Not verified**: what Teams' Return sends the student; behaviour on other Teams assignment layouts; MySchool assignments with several criteria; the Playwright suites for the new dialogs (not run: they need a browser install). Browsers stay the only way into Teams and MySchool; no internal APIs are used.
+
+## Following up on missing work, ICT 9 Q1 Task 3 (2026-11-04)
+
+**Result.** For Task 3 ("Prototype & Test", due Oct 21) the class's work was collected from OneNote, Teams attachments and Code.org, saved to a document and a completion checklist, and seven students with no work were returned in Teams with the same comment and given Emerging in MySchool, each confirmed by reading the destination back. Eighteen Teams chats were then sent (Task 3 notes, Option E notes, and both), each verified in the thread.
+
+**What was found**
+- OneNote: 12 of 28 had a Task 3 page; four more students had Word files linked in Teams, and their text was copied into new Task 3 pages with the teacher's approval. One duplicate page was left for the teacher to delete (OneNote's delete is permanent).
+- Teams: seven students had nothing attached and no OneNote page; two returned students also had nothing. Attachments were Word, Google Docs, Canva, images and Code.org links. Canva showed a human check on a repeat visit and was not bypassed; private Code.org links needed a sign-in.
+- Code.org (Lesson 11, Option E): read per student through the teacher dashboard (`?section_id=...&user_id=...`, `appOptions.level.lastAttempt`). Display names differ from the roster, so matches were confirmed with the teacher.
+
+**What changed, in the order it was found**
+- *Collection*: `onenote_class.py` lists real page lists, matches by title or a single task number, proves identity from the rewritten address, and now accepts a page list only when two reads agree. `assignment_collect.py` merges attachment and Code.org collection into one Chrome session.
+- *Posting problems that were real*: the Task 3 record had no Teams destination ids, so the posting pilot refused; linking it needed "Import all assignment details" and a save, which (through changed spacing in the instructions) bumped the version and outdated the review marks. Spacing-only differences no longer count as a content change. MySchool refused the first save because it sets Graded as soon as a level is chosen; the Graded option is now ticked by default.
+- *Teams only delivers a comment by returning*: the posting dialog's only action is **Post feedback and Return**, which may notify students; this was explained to the teacher before it was used.
+- *No-work students*: the review step refused an empty Work field. There is now a recorded "no submission" note (sources checked, date) and a **No work found…** bulk button; no level is chosen by default.
+- *Chats*: the Microsoft 365 chat connector was blocked by conditional access; Teams web in the app's Chrome was used instead. The first batch skipped everyone (the To box was not focused), which the exactly-one-student check turned into zero sends rather than wrong sends. The sender now waits for results and requires the full text as a new message.
+- *Skill*: `skills/assignment-followup/` (and `skills/dist/assignment-followup.skill`) records the order of work and these lessons.
+
+**Not verified**: the "No work found…" Apply step end to end, `onenote_write_pages.py` and the chat sender's new send check (only its no-match path ran live); what a Teams Return sends to the student; the browser suites `test_sessions_ui.py` and `test_myschool_pilot.py`, which fail identically without these changes (they look for an older posting checkbox).
+

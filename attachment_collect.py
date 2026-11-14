@@ -189,6 +189,7 @@ def run(req, emit):
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.goto(T.TEAMS, wait_until='domcontentloaded')
+            page.wait_for_timeout(4000)              # let Teams draw its left rail, as teams_batch and teams_read do
             session = T.Session(page,60);session.t0=time.time()
             _,_,ids = session.open_one(req['class'],req['title'])
             if ids != req['source']:

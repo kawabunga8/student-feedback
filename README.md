@@ -15,16 +15,20 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Create an unpublished MySchool assignment from Design: load courses, choose course/type/due date and learning outcomes, review, then explicitly Save. Publish stays No and student email stays off.
 - Create an unpublished ordinary assignment in Teams from Design: review the class/title/instructions, confirm, then check the verified Drafts receipt. Publishing, attachments and Forms quiz creation are separate and not automated.
 - Read Teams assignment instructions and rubrics, then optionally use the saved rubric as separate drafting criteria.
-- Collect typed OneNote pages from pasted addresses, or the whole class at once from one notebook address (it tries the likely page titles for each student and lists those it can't find), or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
+- Collect typed OneNote pages from pasted addresses, or the whole class at once from one notebook address (it opens each student's real page list, picks the page that matches the task by exact title or by a single "Task/Stage/Part N" match, never between two candidates, and proves it is the right student, section and page from the address OneNote rewrites; the titles it saw are listed for any student it can't match; it only guesses titles when the list can't be read), or upload Forms response exports with Upload files. Forms scores are shown separately and are never proficiency levels.
 - Load an Assessment folder (`Assessment/<year>/<quarter>/<course>/<assignment>`) and the app sets itself up: it picks the course and quarter and the class list from Course Hub, finds the matching assignment in that course's confirmed Teams class (read-only), imports its name and instructions, saves the assignment, and loads any `<name>.feedback.md` drafts beside each student's work as editable cards.
 - Draft locally in the foreground or background, or load drafts made by `feedback.py` (below). Class overview shows the next action for each student, including per-destination progress (posted to Teams, saved to MySchool).
-- Review: **Mark all reviewed** / **Unreview all**, or each student's own toggle. A level is optional (feedback only) for Teams; MySchool needs one. A student's MySchool comment defaults to their feedback and stays editable.
+- Review: **Mark all reviewed** / **Unreview all**, or each student's own toggle. For students who handed in nothing use **No work found…**: it records an explicit "no submission" note (the sources you checked and the date), keeps Work empty, sets the level and comment you choose (no level is chosen for you) and marks them reviewed; nothing is posted until you post. A level is optional (feedback only) for Teams; MySchool needs one. A student's MySchool comment defaults to their feedback and stays editable.
 - Post to Teams and save to MySchool, each for one student or the whole class, on one engine per destination that reads and writes in a single Chrome session. Every write is confirmed once, re-checks that student's approval at the moment of writing, and is verified by reading the destination back. See the two sections below.
 - Image transcription is an experimental local-vision prototype. Check every line yourself. Open a saved assignment first: each image preview is bound to it, and switching assignments discards the preview instead of adding it to the wrong class.
 
 See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
 
 **Verified live (2026-11-03, ICT 9 Q1 Task 2, 18 students):** posting and Returning feedback in Teams, and saving levels, comments and Graded status in MySchool, each confirmed by reading the destination back. Not verified: what a Teams Return sends to the student, behaviour on other assignment layouts, MySchool assignments with several criteria, and the Playwright suites for the new dialogs (they need a browser install and were not run).
+
+## Class patterns (optional)
+
+In the review step, **Class patterns** checks each student's work against the "Looking for" criteria in the assignment description, on the local model, then counts how many students met each criterion. The report lists criteria and counts only: no names and no work text. A criterion checked for fewer than 5 students is hidden. Nothing is saved (results are lost on reload), nothing is posted, and drafting is unchanged. It counts what the automatic checklist found, so it is a prompt for your own review, not an assessment; review it before using or sharing it. Code: `class_patterns.py`, `ui/patterns.js`, two routes in `app.py`; tests: `tests/test_class_patterns.py`, `tests/test_class_patterns_app.py`. Not yet tried in the live page with a real model.
 
 ## Posting reviewed feedback to Teams
 
@@ -37,6 +41,8 @@ Tick the one confirmation and post. For each student the app re-checks their app
 In **Export & posting**, click **Save to MySchool (all)**, or the **MySchool** button on one student's row. Review and save the assignment first. A student's MySchool comment defaults to their Teams feedback (editable on its own) and is part of the review.
 
 Only the MySchool assignment's **Assessment** address is needed; it is remembered for the assignment. The app reads MySchool in one Chrome session: the assignment's own course, title and publication state (shown as "From MySchool: course → title"; check it is the right assignment), and each student, matched automatically by name. A student it cannot match exactly once is reported, never guessed. Each student's saved level is used for a single-criterion assignment; with several criteria a Levels box appears and you type one level per criterion, in page order (a single level never fills several criteria).
+
+MySchool turns a student's status to Graded whenever a level is chosen, so **Set each student's status to Graded** is ticked by default and the preview says so; the app still verifies the final values and refuses a save that differs from the preview.
 
 Expand a student's full preview (each criterion existing → proposed, the whole comment, the status, and a warning if the assignment is published), tick the one confirmation, and save. Each student's approval is re-checked at the moment of writing; the Save click is never retried; a student counts as saved only after MySchool is reopened and the levels, comment and status match, other students are unchanged and the publication setting is preserved. The run stops at the first problem. An uncertain Save needs a check in MySchool before trying again. Live MySchool saving has not yet been verified: try one student first.
 
@@ -146,14 +152,25 @@ The repository carries maintained `SKILL.md` workflows that Codex or Claude can 
 - [phase-a-collect-and-draft](skills/phase-a-collect-and-draft/SKILL.md): collect verified work, draft locally, save and stop for teacher review.
 - [phase-b-upload](skills/phase-b-upload/SKILL.md): post the saved, reviewed assessment to Teams/MySchool with preview, authorization and destination verification.
 - [rcs-teams-and-myschool-access](skills/rcs-teams-and-myschool-access/SKILL.md): school-browser access, Class Notebook navigation and sign-in/profile troubleshooting.
+- [assignment-followup](skills/assignment-followup/SKILL.md): follow up one Teams assignment end to end: collect work (OneNote, Teams attachments, Code.org), save it to a document, build a completion checklist, post "no work found" feedback, and message students with missing work, confirming recipients and wording first. Also packaged as `skills/dist/assignment-followup.skill` for Claude.
 - [push-laptop-repo-to-github](skills/push-laptop-repo-to-github/SKILL.md): inspect, validate, commit and/or push the changes requested by the user.
 
 These are repository files, not copies automatically synced from a Claude account or globally installed Codex skills. For example: “Use `skills/phase-a-collect-and-draft/SKILL.md` to collect and draft this assignment.” Loading a skill does not authorize posting, publishing or pushing beyond the requested task. The three newly added workflows were reconstructed from the current app and repository documentation; the original account-only skill files were unavailable.
 
+## Following up on an assignment (2026-11-04)
+
+The `assignment-followup` skill and its scripts (`skills/assignment-followup/scripts/`) cover what happens after the due date:
+
+- `assignment_collect.py` (read-only, one Chrome session): each student's Teams attachments, SharePoint Word text, Word editor frames, Canva/Google screenshots, and Code.org project code length and last-saved for every roster student.
+- `teams_chat_send.py` (writes): Teams chats from an approved plan file. A student is messaged only if exactly one directory result is a Student with that exact name, the full approved text must appear as a new message afterwards, and an unconfirmed send is reported UNVERIFIED and never repeated automatically. The Microsoft 365 chat connector may be blocked by the school's access policy, so it uses Teams web in the app's Chrome.
+- `onenote_write_pages.py` (writes): a titled page with text in students' ClassNotebook sections from an approved plan. It skips students who already have a matching page and never deletes.
+
+Run the write tools only on a plan the teacher approved line by line.
+
 ## Files
 - `app.py` - web UI + server. `feedback.py` - prompt, model call (Ollama or LM Studio), CLI.
 - `jobs.py` - background job queue (drafting, Teams/OneNote reads, posting jobs). `ui/` - the workspace's scripts and styles; see `ui/README.md`.
-- `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader. `onenote_class.py` - the whole-class version: one Chrome session, tries likely page titles per student and accepts a page only when its title matches.
+- `teams_read.py` - read-only Teams assignment, rubric and student-status reader. `onenote_read.py` - read-only typed OneNote page reader. `onenote_class.py` - the whole-class version: one Chrome session, lists each student's page list and picks the matching page (falls back to trying likely page titles per student and accepts a page only when its title matches.
 - `forms_import.py` - Microsoft Forms response-export parser (local file, no network). `vision_read.py` - local vision-model image transcription.
 - `teams_batch.py`, `myschool_batch.py` - the one-session posting engines for Teams and MySchool (read, preview, post/save, verify; one student or a whole class). `teams_post.py`, `myschool_post.py` - the earlier one-student workers; the engines reuse their page helpers and safeguards.
 - `stage_submissions.py` - stages collected files into the Assessment folder. `check_session_folder.py` - checks macOS lets the app save there.
@@ -162,4 +179,4 @@ These are repository files, not copies automatically synced from a Claude accoun
 - `courses.json` - fallback course list, quarter dates, department rules.
 - `.env.local` - Course Hub URL/key (git-ignored).
 - `WORKFLOW.md` - assessment workflow plan and status. `ARCHITECTURE.md` - how the pieces fit.
-  `TEAMS-ASSIGNMENT-SETUP.md` - setting up assignments. `skills/` - copies of the workflow's Claude skills.
+  `TEAMS-ASSIGNMENT-SETUP.md` - setting up assignments. `skills/` - maintained agent workflows linked above.

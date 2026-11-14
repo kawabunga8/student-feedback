@@ -554,8 +554,22 @@
     allBtn.disabled = !(parsed && (parsed.title || parsed.instructions));
     const f = results.querySelector('.focus'); if(f && dlg.open) f.scrollIntoView({block:'nearest'});
   }
-  allBtn.onclick = () => {
+  allBtn.onclick = async () => {
     if(!parsed) return;
+    // A Teams assignment from a different class is a different assignment: importing it over the open one would keep the old
+    // class's students on a record that now says it belongs to the new class. Start a separate assignment instead (the open one
+    // stays saved as it is), so the student cards follow the class.
+    {
+      const cls0 = clsIn.value.trim(), m0 = mappedCourse(cls0), mv0 = m0 ? courseValueFor(m0) : '', cur0 = $('#course').value;
+      const savedClass = (record && record.teams && record.teams.className) || '';
+      const otherClass = !!record && ((mv0 !== '' && cur0 !== '' && mv0 !== cur0) || (!!savedClass && !!cls0 && savedClass !== cls0));
+      if(otherClass) {
+        if(!confirm('“' + (parsed.title || 'This assignment') + '” is from a different class (' + (cls0 || 'another Teams class') + ') than the open assignment. ' +
+          'Start a separate assignment for it? The open one and its students stay saved as they are, and the student list will switch to the new class.')) return;
+        await flushSession();
+        newAssignment();
+      }
+    }
     const curTitle = $('#atitle').value.trim(), cur = splitRubric($('#rubric').value).instructions, replacing = [];
     if(parsed.title && curTitle && curTitle !== parsed.title) replacing.push('the assignment name');
     if(parsed.instructions && cur && cur !== parsed.instructions) replacing.push('the instructions (your teacher-only feedback focus is kept)');
@@ -901,6 +915,23 @@
   const sessLine = make('div', 'asg-session'); sessLine.setAttribute('role', 'status');
   barStatus.after(sessLine);
   const sessNote = make('div', 'sess-note'); sessLine.after(sessNote);
+  // The saved folder is fixed on the first save. If the assignment's course or term no longer matches the folder, say so and offer the move.
+  const folderWarn = make('div', 'asg-session warn'); folderWarn.hidden = true; folderWarn.setAttribute('role', 'alert'); sessNote.after(folderWarn);
+  function renderFolderWarn() {
+    const c = sess.check;
+    if(!record || !c || sess.aid !== record.id) { folderWarn.hidden = true; folderWarn.replaceChildren(); return; }
+    const btn = make('button', '', 'Move folder'); btn.type = 'button';
+    btn.onclick = async () => {
+      if(!confirm('Move this assignment’s saved folder from “' + c.have + '” to “' + c.want + '”? Its students and collection records move with it.')) return;
+      btn.disabled = true;
+      await flushSession();
+      let d; try { d = await postJSON('/api/session-move', {assignment:record.id}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+      if(d.error) { alert(d.error); btn.disabled = false; return; }
+      sess.path = d.path; sess.check = null; renderSess(); renderFolderWarn();
+    };
+    folderWarn.replaceChildren('This assignment is for “' + c.want.split('/').slice(1).join(' › ') + '” but its saved folder is under “' + c.have.split('/').slice(1).join(' › ') + '”. ', btn);
+    folderWarn.hidden = false;
+  }
   function collect() {
     return ws.cards().map(c => {
       const out = c.querySelector('.out:not(.err)'), a = ws.approvals.get(c), p = ws.posted.get(c) || {};
@@ -1007,7 +1038,7 @@
     let d; try { d = await getJSON('/api/session?assignment=' + encodeURIComponent(record.id)); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
     if(!ownsSession(generation, owner)) return;
     if(d.error) { sess.err = d.error; renderSess(); return; }     // autosave stays off: it must not overwrite a session it couldn't read
-    sess.path = d.path; sess.status = d.status;
+    sess.path = d.path; sess.status = d.status; sess.check = d.folderCheck || null; renderFolderWarn();
     if(d.session) { restoreStudents(d.session.students || []); Object.assign(sess, {version:d.session.version, at:d.session.updated}); } else clearCards();
     sess.sig = JSON.stringify(collect()); sess.loaded = true; ws.refresh(); renderSess();
   }

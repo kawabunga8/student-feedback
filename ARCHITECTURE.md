@@ -547,3 +547,11 @@ Claims are per local assignment and MySchool course ID. A failure before write a
 **Teams UI facts the code depends on** (observed live; they can change): the Assignments list shows one tab at a time; the roster tabs print counts ("To return (26)"); the grading panel may be a side pane, with a split Return button whose menu arrow is also named Return; a tooltip can cover a tab, so tab clicks fall back to a direct click event; a Returned student's panel opens by clicking the name, not the speed-grader link. **MySchool facts**: the Assessment tab's cards include a blank template; the comment box has no length limit; the title and course are in the page.
 
 **Class map.** `class-map.json` links a Teams class to a Course Hub course per school year; exactly one class per course is selected automatically. Keep it free of wrong confirmations.
+
+## Follow-up tools and the no-submission state (2026-11-04)
+
+- **No submission is a recorded state, not an empty field.** Each student record has a `nosub` text ("No submission found <date> in: <sources>"). It is saved with the session and is part of the approval's bound values, so changing it voids the review; an approval saved before the field existed counts it as empty. The review gate accepts either Work or a no-submission note. Work stays evidence from the student, never teacher feedback.
+- **What counts as a content change.** `save_assignment_record` compares text fields after collapsing whitespace, so spacing-only differences do not create a content version or outdate reviews. Destination ids (the Teams source) are metadata; the posting engines separately compare the stored destination at the moment of writing.
+- **Collection and write tools** live in `skills/assignment-followup/scripts/`: one read-only collector and two write tools (`teams_chat_send.py`, `onenote_write_pages.py`) that take an approved plan file. They share the app's Chrome profile and the browser lock, and none of them is an app endpoint: they are teacher-run, plan-in/result-out scripts.
+- **OneNote page lists** are returned only when two reads a moment apart agree, so a list still showing the previous student's pages is never accepted.
+

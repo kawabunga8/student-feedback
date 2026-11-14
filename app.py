@@ -23,6 +23,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import feedback as fb
+import class_patterns as cpat
 import hashlib
 import sys
 import myschool_post
@@ -357,7 +358,53 @@ def load_session(aid):
     rel, d = session_folder(aid, rec)
     s = _read_json(d / "manifest.json", None)
     s = s if isinstance(s, dict) else None
-    return {"path": rel, "session": s, "status": session_status(s, rec) if s else None}
+    return {"path": rel, "session": s, "status": session_status(s, rec) if s else None, "folderCheck": folder_check(rec, rel)}
+
+
+def _wanted_parent(rec):
+    course = rec.get("course") or {}
+    return "/".join([_folder_part(course.get("schoolYear"), "unsorted"), _folder_part(rec.get("term"), "no term"),
+                     _folder_part(course.get("label") or course.get("name"), "no course")])
+
+
+def folder_check(rec, rel):
+    """None when the folder sits under the assignment's own year/term/course; else {have, want}. The folder is fixed when the
+    session is first saved, so a record whose course or term changed later would otherwise keep its old class's folder unseen."""
+    have, want = "/".join(rel.split("/")[:3]), _wanted_parent(rec)
+    return None if have.casefold() == want.casefold() else {"have": have, "want": want}
+
+
+def move_session(aid):
+    """Move the assignment's whole folder (session and .jobs sidecars) under its own year/term/course and update the
+    bookkeeping. Refused while a job is active or when the target already exists."""
+    with _save_lock:
+        rec = load_assignment_record(aid)
+        rel, d = session_folder(aid, rec)
+        chk = folder_check(rec, rel)
+        if not chk:
+            return {"moved": False, "path": rel}
+        if QUEUE is not None and QUEUE.active_for(aid):
+            raise ValueError("A job for this assignment is still running. Wait for it to finish, then move the folder.")
+        new_rel = chk["want"] + "/" + rel.split("/")[-1]
+        _, nd = session_folder_for(new_rel)
+        if nd.exists():
+            raise ValueError("The folder “" + new_rel + "” already exists. Nothing was moved.")
+        if not d.exists():
+            raise FileNotFoundError("The saved folder is missing.")
+        nd.parent.mkdir(parents=True, exist_ok=True)
+        d.rename(nd)
+        index = _read_json(SESSION_INDEX, {}); index[aid] = new_rel
+        _atomic_write_json(SESSION_INDEX, index)
+        if QUEUE is not None:
+            QUEUE.relocate(aid, new_rel)
+        return {"moved": True, "path": new_rel, "from": rel}
+
+
+def session_folder_for(rel):
+    root = ASSESSMENT.resolve(); d = (root / rel).resolve()
+    if d == root or not d.is_relative_to(root):
+        raise ValueError("bad session folder")
+    return rel, d
 
 
 def _clean_snapshot(x):
@@ -516,7 +563,42 @@ def draft_for(p):
         raise ValueError("Add an assignment description or choose learning standards.")
     assessment = rubric_for(p) if p.get("use_rubric") else None
     return fb.generate(p["model"], rubric, p.get("grade", ""), p.get("label", "student"), p["work"], p.get("notes", ""), p.get("level", ""),
-                       p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""), assessment=assessment)
+                       p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""), assessment=assessment,
+                       closing=term_is_closing(p.get("term", "")))
+
+
+def criteria_check_for(p):
+    """One student's criteria checklist (which of the teacher's "Looking for" criteria the work already meets), for the
+    optional class patterns report. It uses the same rubric text and local model as drafting, but writes no feedback
+    and saves nothing. The reply holds criteria only, never the work."""
+    criteria = fb.rubric_criteria(p.get("rubric", ""))
+    if not criteria:
+        raise ValueError('Add a "Looking for:" line (or a bulleted list under it) to the assignment description first: the class report counts those criteria.')
+    work = str(p.get("work", ""))
+    if not work.strip():
+        raise ValueError("There is no work to check.")
+    done, missing, _unfinished = fb.work_checklist(p["model"], criteria, work)
+    return {"criteria": criteria, "done": done, "missing": missing, "checked": bool(done or missing)}
+
+
+def class_patterns_for(p):
+    """Counts per criterion from per-student done / missing lists. No names or work text are accepted or returned."""
+    criteria = [str(c) for c in (p.get("criteria") or [])][:50]
+    rows = [{"done": [str(c) for c in (r.get("done") or [])], "missing": [str(c) for c in (r.get("missing") or [])]}
+            for r in (p.get("rows") or [])[:500] if isinstance(r, dict)]
+    summary = cpat.summarize(rows, criteria)
+    return {"summary": summary, "markdown": cpat.render_markdown(summary, str(p.get("title", ""))[:120])}
+
+
+def term_is_closing(term_label, today=None):
+    """End-of-term wording (no next steps) once the chosen term is within a week of its last day. The date comes from Course Hub's
+    quarter list (or its saved copy); an unknown term or date means normal wording."""
+    try:
+        quarters = course_data().get("quarters", [])
+    except Exception:
+        return False
+    q = next((q for q in quarters if str(q.get("label", "")).strip() == str(term_label or "").strip()), None)
+    return bool(q) and fb.is_closing(q.get("end", ""), today)
 
 
 def rubric_sha(r):
@@ -2409,7 +2491,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Drafting stopped after " + i + " students. Existing drafts remain available." : failed ? "Drafting: " + failed + " of " + cards.length + " failed (see the red messages)." : "Drafting finished. Edit the feedback, then mark it reviewed. Posting is a separate step.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/attachments.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/attachments.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/patterns.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -2436,7 +2518,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/attachments.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/vision.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/attachments.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/patterns.js", "/ui/vision.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -2571,7 +2653,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"students": [{"name": a, "work": b, "feedback": c} for a, b, c in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
-        if self.path in ("/api/assignments", "/api/class-map", "/api/session") or self.path.startswith("/api/jobs"):
+        if self.path in ("/api/assignments", "/api/class-map", "/api/session", "/api/session-move") or self.path.startswith("/api/jobs"):
             # Saving needs a JSON request from this app's own page: another website can't send one without the
             # browser asking first (a preflight this server never approves), and a stated Origin must be this app.
             origin = self.headers.get("Origin")
@@ -2609,6 +2691,8 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         raise ValueError("unknown action")
                     return self._send(200, {"job": _job_view(job)})
+                if self.path == "/api/session-move":
+                    return self._send(200, move_session(str(body.get("assignment", ""))))
                 if self.path == "/api/session":
                     try:
                         return self._send(200, save_session(str(body.get("assignment", "")), body.get("students"), body.get("baseVersion")))
@@ -2618,6 +2702,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"map": save_class_mapping(body)})
             except FileNotFoundError:
                 return self._send(200, {"error": "Not found: that assignment or job doesn't exist."})
+            except Exception as e:
+                return self._send(200, {"error": f"{type(e).__name__}: {e}"})
+        if self.path in ("/api/criteria-check", "/api/class-patterns"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                if n > 500_000:
+                    raise ValueError("too large")
+                body = json.loads(self.rfile.read(n))
+                return self._send(200, criteria_check_for(body) if self.path == "/api/criteria-check" else class_patterns_for(body))
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
         if self.path != "/api/generate":

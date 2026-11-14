@@ -72,11 +72,11 @@
       const token = generation;
       const nm = name.value.trim();
       if(!nm) { msg.textContent = 'Type the student’s name first.'; name.focus(); return; }
-      const cards = [...document.querySelectorAll('.student')];
-      let c = cards.find(x => x.querySelector('.name').value.trim().toLowerCase() === nm.toLowerCase() && !x.querySelector('.work').value.trim());
-      let how = 'Filled the empty card for ' + nm + '.';
-      if(!c) { c = window.addStudent(nm, pg.text || ''); how = 'Added a new card for ' + nm + '.'; }
-      else { c.querySelector('.work').value = pg.text || ''; }
+      const pl = plan(nm, pg.text);
+      if(pl.kind === 'many') { msg.textContent = 'There are ' + pl.n + ' cards for ' + nm + '. Remove the extra cards first, so the page goes to the right one.'; return; }
+      if(pl.kind === 'replace' && !confirm('There is already a card for ' + nm + ' with different work. Replace that work with this page? Its feedback stays on the card, but it will need checking again.')) return;
+      let c = pl.card, how = pl.kind === 'same' ? nm + '\u2019s card already holds this page: nothing changed.' : pl.kind === 'fill' ? 'Filled the empty card for ' + nm + '.' : pl.kind === 'replace' ? 'Replaced the work on the card for ' + nm + '.' : 'Added a new card for ' + nm + '.';
+      if(!c) c = window.addStudent(nm, pg.text || ''); else if(pl.kind !== 'same') c.querySelector('.work').value = pg.text || '';
       c.querySelector('.work').dispatchEvent(new Event('input', {bubbles: true}));
       if(typeof applyTeams === 'function' && typeof TEAMS !== 'undefined' && TEAMS) applyTeams();
       try { await postJSON('/api/jobs/' + jobId + '/delivered', {keys: ['collect']}); } catch(e) { /* the card is made either way */ }
@@ -87,6 +87,25 @@
     act.replaceChildren(add);
   }
 
+
+
+  // One card per student. A card is the student's existing one when the class-list identity or the typed name is the same,
+  // whether or not it already has work: a second collection updates it, it never adds another.
+  function cardsFor(nm) {
+    let rid = '';
+    if(typeof ROSTER !== 'undefined' && ROSTER.length > 0 && typeof window.findStudent === 'function') { const r = window.findStudent(nm); if(r.status === 'match' && r.s) rid = String(r.s.id || ''); }
+    return [...document.querySelectorAll('.student')].filter(k => (rid && String(k.dataset.rid || '') === rid) || k.querySelector('.name').value.trim().toLowerCase() === nm.trim().toLowerCase());
+  }
+  const sameText = (a, b) => String(a || '').trim() === String(b || '').trim();
+  // What an import would do for one student: 'add' (no card yet), 'fill' (card with no work), 'same' (already holds this text),
+  // 'replace' (card holds different work), or 'many' (duplicate cards: nothing is guessed).
+  function plan(nm, text) {
+    const found = cardsFor(nm);
+    if(found.length > 1) return {kind: 'many', n: found.length};
+    if(!found.length) return {kind: 'add'};
+    const w = found[0].querySelector('.work').value;
+    return {kind: !w.trim() ? 'fill' : sameText(w, text) ? 'same' : 'replace', card: found[0]};
+  }
 
   // ---- several pages: one row per page read, matched to the class list, added only when you tick and confirm
   const rosterLoaded = () => typeof ROSTER !== 'undefined' && ROSTER.length > 0 && typeof window.findStudent === 'function';
@@ -135,11 +154,16 @@
       const matches = chosen.map(x => window.findStudent(x.name.value.trim()).s);
       const ids = matches.map(s => s.id || (s.last + ', ' + s.first).toLowerCase());
       if(new Set(ids).size !== ids.length) { msg.textContent = 'Two ticked pages match the same student. Add one page for that student at a time.'; return; }
+      const plans = chosen.map(x => plan(x.name.value.trim(), x.pg.text));
+      const dup = plans.findIndex(p => p.kind === 'many');
+      if(dup >= 0) { msg.textContent = 'There are ' + plans[dup].n + ' cards for ' + chosen[dup].name.value.trim() + '. Remove the extra cards first, so the page goes to the right one.'; return; }
+      const swaps = chosen.filter((x, i) => plans[i].kind === 'replace').map(x => x.name.value.trim());
+      if(swaps.length && !confirm('These students already have a card with different work: ' + swaps.join(', ') + '. Replace that work with the new pages? Their feedback stays on the cards, but it will need checking again.')) return;
       const token = generation, done = [];
-      for(const x of chosen) {
-        const nm = x.name.value.trim();
-        let c = [...document.querySelectorAll('.student')].find(k => k.querySelector('.name').value.trim().toLowerCase() === nm.toLowerCase() && !k.querySelector('.work').value.trim());
-        if(!c) c = window.addStudent(nm, x.pg.text || ''); else c.querySelector('.work').value = x.pg.text || '';
+      for(const [i, x] of chosen.entries()) {
+        const nm = x.name.value.trim(), pl = plans[i];
+        let c = pl.card;
+        if(!c) c = window.addStudent(nm, x.pg.text || ''); else if(pl.kind !== 'same') c.querySelector('.work').value = x.pg.text || '';
         c.querySelector('.work').dispatchEvent(new Event('input', {bubbles: true}));
         if(typeof applyTeams === 'function' && typeof TEAMS !== 'undefined' && TEAMS) applyTeams();
         if(rosterLoaded() && typeof window.matchCard === 'function') window.matchCard(c);

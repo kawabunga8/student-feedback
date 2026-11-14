@@ -52,6 +52,9 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 
 | File | Covers |
 |---|---|
+| `test_onenote_class.py` | Whole-class OneNote collection: page-list discovery, picking a page by title or one task number (never between two), identity from the rewritten address, wrong-student fallback, job handler outcomes (29 checks) |
+| `test_posting_guards.py` | MySchool criteria identity in the preview, Teams read-back identity, posting jobs never resumed (11 checks) |
+| `test_posting_jobs.py` | Teams/MySchool batch job handlers: partial runs, cancel, uncertain outcomes, approval changed (10 checks) |
 | `test_rubric_drafting.py` | Saved rubric criteria, setting persistence, stale drafts/approvals and rejected level wording |
 | `test_teams_rubric.py` | Separate rubric parsing and supported dialog controls |
 | `test_onenote_collect.py` | Typed-page collection, batch outcomes, roster checks and assignment ownership |
@@ -61,6 +64,7 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 | `test_teams_post.py` | Older one-student Teams pilot worker: preview, destination identity, explicit Return, single-use previews and read-back (the card was removed 2026-11-03; the worker's helpers are still used) |
 | `test_forms_import.py` | Local Forms export parsing, metadata exclusion, limits, notices and upload UI |
 | `test_draft_quality.py` | Draft benchmark counts and audits with scripted replies |
+| `test_closing_mode.py` | End-of-term feedback: the 7-day rule, the no-next-steps prompt and formats, the advice check, and the app picking the mode from the saved quarter dates |
 | `test_class_overview.py` | Read-only card states, filters and next actions |
 | `test_vision_read.py` | Synthetic images, stand-in vision model, editable text, roster matching and the assignment-binding guard |
 | `test_transcribe_check.py` | Character/word error calculations on invented text |
@@ -76,3 +80,10 @@ Real-model measurements are deliberately outside the synthetic runner. Start Oll
 ## Not covered by these suites (2026-11-03)
 
 The one-session engines (`teams_batch.py`, `myschool_batch.py`), their job types and the single posting dialogs (`ui/teams_post.js`, `ui/myschool.js`) have no suite here. They were checked three ways instead: read-only and dry-run live runs against real Teams and MySchool (reading, name matching, opening and closing panels, with nothing typed or clicked), mocked-job checks of the dialogs in a browser (ready/skipped/error rows, the one confirmation, stop at the first failure, per-criterion levels), and one live class (ICT 9 Q1 Task 2, 18 students) posted and saved with read-back. A Playwright suite for the new dialogs, using mocked jobs, is still to be written; the older MySchool and Teams posting suites above target removed dialogs.
+
+## Notes (2026-11-04)
+
+- Run from a stopped app **and a stopped Ollama** (ports 8765 and 11434). A first run right after restarting can time out once; rerun the single file.
+- `test_server_approvals.py` and `test_assignment_records_ui.py` pass. `test_sessions_ui.py` and `test_myschool_pilot.py` time out at the same step with and without the 2026-11-04 changes (they look for an older posting checkbox that is no longer visible), so they need updating or retiring.
+- Not covered: the "No work found…" dialog's Apply step, and `skills/assignment-followup/scripts/` (they drive real Teams, OneNote, Code.org and chat, so they are checked live by hand). The no-submission field was checked with a direct approval-validation script (a new approval is current, an older one without the field is still current, changing the field voids it).
+

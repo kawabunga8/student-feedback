@@ -120,6 +120,15 @@ class JobQueue:
             ids = [r["id"] for r in c.execute("SELECT id FROM jobs WHERE assignment=? ORDER BY created DESC, id DESC LIMIT ?", (assignment, limit))]
         return [self.get(i) for i in ids]
 
+    def active_for(self, assignment):
+        with self._db() as c:
+            return c.execute("SELECT COUNT(*) FROM jobs WHERE assignment=? AND state IN ('queued','running','waiting_for_sign_in')", (assignment,)).fetchone()[0]
+
+    def relocate(self, assignment, folder):
+        """Point every job of an assignment at its new folder (its .jobs sidecars were moved with it)."""
+        with self._db() as c:
+            c.execute("UPDATE jobs SET folder=? WHERE assignment=?", (folder, assignment))
+
     def cancel(self, jid):
         with self._db() as c:
             row = c.execute("SELECT state FROM jobs WHERE id=?", (jid,)).fetchone()
