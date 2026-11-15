@@ -69,6 +69,8 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 | `test_class_overview.py` | Read-only card states, filters and next actions |
 | `test_vision_read.py` | Synthetic images, stand-in vision model, editable text, roster matching and the assignment-binding guard |
 | `test_transcribe_check.py` | Character/word error calculations on invented text |
+| `test_sharepoint_collect.py` | Synced SharePoint folder collection: flat and nested layouts, ambiguous folders and names, text/PDF/Word reading, non-text and cloud-only files, symlinks, size limits, never writing in the sync folder, no-overwrite re-runs, name-free `--counts-only` reports |
+| `test_deidentify_shape.py` | The name-free shape copy: no input file opened, no name left, quirks kept (initials, accents, hyphens, shared names), same collector results as the original |
 
 The runner discovers files automatically; counts depend on the current checkout. The last 17-file Mac run reported 586 passes and two UI-file failures. Separate reruns passed MySchool 44/44 and Teams statuses 29/29. Do not report that as a clean combined run. Newer feature tests are listed separately in WORKFLOW.md.
 
