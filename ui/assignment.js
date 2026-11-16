@@ -283,7 +283,8 @@
       yourself. Either way nothing is changed in Teams.</p>
     <div class="teams-reader">
       <div class="teams-actions"><button type="button" class="primary teams-list-btn">List my assignments</button>
-        <input class="teams-filter" aria-label="Filter the list by class or title" placeholder="Filter by class or title…" hidden>
+        <select class="teams-class-pick" aria-label="Show assignments from this team" hidden></select>
+        <input class="teams-filter" aria-label="Filter the list by title" placeholder="Filter by title…" hidden>
         <span class="status teams-job-msg" role="status"></span><span class="teams-job-actions"></span></div>
       <div class="teams-list" role="list"></div>
     </div>
@@ -315,7 +316,7 @@
   clsIn.addEventListener('input', () => { changingMatch = false; render(); });
   function renderClassList() { dq('#teams-classes').replaceChildren(...Object.keys(yearMap()).sort().map(c => new Option(c, c))); }
   // ---- read from Teams (a background job; read-only). The result fills the same preview rows the paste does.
-  const tb = dq('.teams-list-btn'), tmsg = dq('.teams-job-msg'), tlist = dq('.teams-list'), tact = dq('.teams-job-actions'), tfilter = dq('.teams-filter');
+  const tb = dq('.teams-list-btn'), tmsg = dq('.teams-job-msg'), tlist = dq('.teams-list'), tact = dq('.teams-job-actions'), tfilter = dq('.teams-filter'), tpick = dq('.teams-class-pick');
   let tItems = [];
   const stopWait = () => { tb.disabled = false; };
   async function follow(id, onDone) {
@@ -373,14 +374,23 @@
     try { return await run; } finally { discoveryPending.delete(key); }
   }
   tb.textContent = 'Refresh assignment list from Teams';
-  tb.onclick = () => startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length;
-    if(design.teamsClass && tItems.some(x => x.class_name === design.teamsClass)) tfilter.value = design.teamsClass;   // show this course's class first
+  // The team dropdown lists every class in the last read, with "All Teams" first. It keeps the teacher's choice across
+  // refreshes, and otherwise starts on this course's confirmed Teams class.
+  function fillTeamsPicker() {
+    const counts = new Map(); tItems.forEach(x => counts.set(x.class_name, (counts.get(x.class_name) || 0) + 1));
+    const names = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+    const prev = tpick.value, want = names.includes(prev) ? prev : names.includes(design.teamsClass) ? design.teamsClass : '';
+    const opt = (v, t) => { const o = make('option', '', t); o.value = v; return o; };
+    tpick.replaceChildren(opt('', `All Teams (${tItems.length})`), ...names.map(n => opt(n, `${n} (${counts.get(n)})`)));
+    tpick.value = want; tpick.hidden = tfilter.hidden = !tItems.length;
+  }
+  tb.onclick = () => startTeams({op:'list'}, res => { tItems = res.assignments || []; fillTeamsPicker();
     renderTeamsList();
     tmsg.textContent = tItems.length ? `Read ${tItems.length} assignments at ${when(res.read_at)}. Choose one to read.` : 'Teams showed no assignments.'; }, true);
-  tfilter.addEventListener('input', renderTeamsList);
+  tfilter.addEventListener('input', renderTeamsList); tpick.addEventListener('change', renderTeamsList);
   function renderTeamsList() {
-    const q = tfilter.value.trim().toLowerCase(), cls = clsIn.value.trim().toLowerCase();
-    const rows = tItems.filter(x => !q || (x.title + ' ' + x.class_name).toLowerCase().includes(q))
+    const q = tfilter.value.trim().toLowerCase(), cls = clsIn.value.trim().toLowerCase(), team = tpick.value;
+    const rows = tItems.filter(x => (!team || x.class_name === team) && (!q || (x.title + ' ' + x.class_name).toLowerCase().includes(q)))
       .sort((a, b) => (cls && b.class_name.toLowerCase() === cls) - (cls && a.class_name.toLowerCase() === cls)).slice(0, 60);
     tlist.replaceChildren(...rows.map(x => {
       const r = make('div', 'teams-item'); r.setAttribute('role', 'listitem');
@@ -1007,7 +1017,7 @@
     try {
       setNote('Finding “' + path.split('/').pop() + '” in Teams (' + design.teamsClass + ')… Chrome opens for this; sign in there if asked.');
       let hit = null;
-      await startTeams({op:'list'}, res => { tItems = res.assignments || []; tfilter.hidden = !tItems.length;
+      await startTeams({op:'list'}, res => { tItems = res.assignments || []; fillTeamsPicker();
         const hits = tItems.filter(x => x.class_name === design.teamsClass && norm(x.title) === slug); hit = hits.length === 1 ? hits[0] : null;
         tmsg.textContent = hit ? 'Found “' + hit.title + '”.' : hits.length > 1 ? 'More than one Teams assignment matches that folder name.' : 'No assignment in ' + design.teamsClass + ' matches that folder name.'; });
       if(!hit) { setNote('Couldn’t match this folder to one Teams assignment. Use Choose from Teams… and pick it.', true); return; }

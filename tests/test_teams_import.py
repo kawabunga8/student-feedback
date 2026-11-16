@@ -114,6 +114,13 @@ with sync_playwright() as p:
     pg.wait_for_selector(".teams-item", timeout=15000)
     check("  list shows rows with class and due", pg.locator(".teams-item").count() == 7 and "RCS - H - Q1 ICT 9 [2026-27] · Nov 4th" in pg.locator(".teams-list").inner_text())
     check("  fractions shown as unlabelled", "not labelled by Teams" in pg.locator(".teams-list").inner_text())
+    opts = pg.eval_on_selector_all(".teams-class-pick option", "os => os.map(o => [o.value, o.textContent])")
+    classes = pg.eval_on_selector_all(".teams-item .hint-inline", "es => [...new Set(es.map(e => e.textContent.split(' · ')[0]))]")
+    check("  team dropdown lists All Teams then every class in the list", opts and opts[0][0] == "" and opts[0][1] == "All Teams (7)" and sorted(o[0] for o in opts[1:]) == sorted(classes), opts)
+    ict = next((o[0] for o in opts if "Q1 ICT 9" in o[0]), ""); pg.select_option(".teams-class-pick", ict)
+    shown = pg.eval_on_selector_all(".teams-item .hint-inline", "es => es.map(e => e.textContent.split(' · ')[0])")
+    check("  choosing a team shows only its assignments", ict and shown and all(c == ict for c in shown) and len(shown) < 7, shown)
+    pg.select_option(".teams-class-pick", "")
     pg.fill(".teams-filter", "task a"); check("  filter narrows the list", pg.locator(".teams-item").count() == 2, pg.locator(".teams-item").count())
     row = pg.locator(".teams-item", has_text="Q1 ICT 9").first
     row.locator("text=Use assignment details").click()
