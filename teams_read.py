@@ -388,18 +388,32 @@ class Session:
             raise ReadError("differs", f"internal: click kind '{kind}' is not allowed")
         locator.click(timeout=5000)
 
+    RAIL_WAIT = 30   # seconds: Teams can take a while to draw its left rail after the page loads
+
     def open_assignments(self):
-        for loc in (self.page.get_by_role("button", name=re.compile(r"^Assignments")),
-                    self.page.get_by_role("tab", name=re.compile(r"^Assignments")),
-                    self.page.locator('[aria-label^="Assignments"]')):
-            try:
-                if loc.first.is_visible(timeout=800):
+        # Teams redraws the rail several times while it loads, so a visible icon can still refuse a click: retry both.
+        end, clicked, seen = time.time() + self.RAIL_WAIT, False, False
+        while not clicked and time.time() < end:
+            for loc in (self.page.get_by_role("button", name=re.compile(r"^Assignments")),
+                        self.page.get_by_role("tab", name=re.compile(r"^Assignments")),
+                        self.page.locator('[aria-label^="Assignments"]')):
+                try:
+                    if not loc.first.is_visible(timeout=800):
+                        continue
+                    seen = True
                     self.click("rail-assignments", loc.first)
+                    clicked = True
                     break
-            except Exception:
-                continue
-        else:
-            raise ReadError("differs", "Couldn't find the Assignments icon in Teams' left rail (is the window wide enough, and is Assignments pinned?).")
+                except Exception:
+                    continue
+            if not clicked:
+                self.page.wait_for_timeout(1000)
+        if not clicked:
+            raise ReadError("differs", (f"Teams showed the Assignments icon but it couldn't be clicked within {self.RAIL_WAIT} s "
+                                        "(a Teams pop-up may be covering it; close it in the Chrome window and try again).") if seen else
+                                       (f"Couldn't find the Assignments icon in Teams' left rail within {self.RAIL_WAIT} s "
+                                        "(is the window wide enough, and is Assignments pinned?)."))
+        self.note(f"Assignments opened after {int(time.time() - self.t0)} s")
         t = self.wait_for("assignment list", lambda t: bool(re.search(r"^Assignments\s*$", t, re.M)) and bool(parse_list(t)))
         return t
 
