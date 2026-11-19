@@ -1,0 +1,13 @@
+{
+  "case_id": "sample-01-MADE-UP",
+  "grade": 10,
+  "lessons_completed": ["Intervals 1: Major and minor 2nds and 3rds", "Intervals 2: Perfect 4ths and 5ths", "Rhythm 1: Quarter and eighth notes"],
+  "self_chosen_exercises": ["Chord quality: major vs minor", "Melodic dictation 1"],
+  "attempts_30d": 46,
+  "active_days_30d": 11,
+  "attempts_after_pass": 9,
+  "accuracy_first_pct": 58,
+  "accuracy_latest_pct": 81,
+  "journal_entry": "I kept getting 3rds mixed up with 4ths at the start. Then I started singing the first note before I played the interval and it got easier. The rhythm lessons were harder, my timing scores stayed low even when I felt like I was tapping on the beat. I want to get better at hearing chords in the songs we play in band.",
+  "first_mate_note": ""
+}

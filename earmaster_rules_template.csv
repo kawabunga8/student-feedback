@@ -1,0 +1,2 @@
+rule_id,status,condition_1_field,condition_1_operator,condition_1_value,condition_2_field,condition_2_operator,condition_2_value,message_to_student,shingo_notes
+EXAMPLE,EXAMPLE - delete this row or ignore it; the script skips it,attempts_after_pass,>,0,,,,"You kept practising after you passed {attempts_after_pass} times - that is a strong habit.",This row only shows the format. Write your own 5-6 rules below it. Fields you can test are listed in earmaster_rules_README.txt

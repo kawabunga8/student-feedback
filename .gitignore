@@ -20,3 +20,7 @@ collected/
 # Reviewed snapshots exported from the workspace hold student work and private notes.
 reviewed-feedback*.json
 quality-reports/
+
+# EarMaster mode: empty templates (no data) may be tracked. Filled-in copies under any other name stay ignored.
+!earmaster_review_log_template.csv
+!earmaster_rules_template.csv
