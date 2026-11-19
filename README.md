@@ -180,3 +180,15 @@ Run the write tools only on a plan the teacher approved line by line.
 - `.env.local` - Course Hub URL/key (git-ignored).
 - `WORKFLOW.md` - assessment workflow plan and status. `ARCHITECTURE.md` - how the pieces fit.
   `TEAMS-ASSIGNMENT-SETUP.md` - setting up assignments. `skills/` - maintained agent workflows linked above.
+
+## EarMaster reflection feedback (optional mode; made-up cases only)
+
+A separate mode that turns EarMaster practice data plus a student's journal into a short **draft** (Hattie & Timperley's three questions, tied to RCS Fine Arts standards 1-3). Local only (Ollama `qwen2.5:14b`). **Never put real student data in this mode's files**; write made-up cases. Nothing here is sent to a student: you review every draft.
+
+1. Write a case: copy `earmaster_cases/sample-01.json`, change the values and give it a new `case_id`. Check it: `python3 earmaster_cases.py earmaster_cases/`
+2. Try one case: `python3 earmaster_feedback.py earmaster_cases/sample-01.json`
+3. Run every case: `python3 earmaster_feedback.py earmaster_cases/` (drafts saved in `earmaster_outputs/` with case, model, rubric and prompt version, timestamp)
+4. Review each draft: copy `earmaster_review_log_template.csv` to `earmaster_review_log.csv` and add a row per case.
+5. Rule-based comparison: copy `earmaster_rules_template.csv` to `earmaster_rules.csv`, write your own rules (see `earmaster_rules_README.txt`), then `python3 earmaster_rules.py earmaster_cases/`.
+
+Rubric and standards wording: `earmaster_rubric.md` (change its version line when you edit it). Build notes: `BUILD_LOG.md`.
