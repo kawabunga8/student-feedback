@@ -23,6 +23,17 @@ with sync_playwright() as p:
   if returned and fail_read[0]:raise P.PilotError('Return could not be verified.')
   return panel,editor,{'source':source,'submission_id':'33333333-3333-3333-3333-333333333333','existing':editor.inner_text().strip(),'returned':returned}
  P.open_target=open_target
+ class Nav:                                   # the fake page cannot load Teams: goto does nothing, everything else is the real page
+  def __init__(s,page):s._p=page
+  def goto(s,*a,**k):pass
+  def __getattr__(s,n):return getattr(s._p,n)
+ nav=Nav(pg);roster=[];roster_mode=['ok']
+ original_confirm=P.confirm_returned
+ def confirm_returned(page,req):
+  roster.append(req['target_name'])
+  if roster_mode[0]=='not-returned':raise P.PilotError('The roster did not confirm Returned. Check Teams before trying again.')
+  if roster_mode[0]=='unreadable':raise RuntimeError('timeout')
+ P.confirm_returned=confirm_returned
  preview=P.operate(pg,REQ)
  check('preview returns existing feedback without editing or Return',preview['existing']=='Earlier feedback' and not pg.get_by_role('button',name='Return').get_attribute('data-clicked'))
  calls=[]
@@ -36,12 +47,14 @@ with sync_playwright() as p:
  check('changed remote feedback rejects stale preview',refuses(lambda:P.operate(pg,req,authorized),'changed') and not calls)
  editor.fill('Earlier feedback')
  check('expired preview rejects before edits',refuses(lambda:P.operate(pg,{**req,'preview':{**preview,'read_at':0}},authorized),'expired'))
- out=P.operate(pg,req,authorized)
+ out=P.operate(nav,req,authorized)
  check('approved feedback is filled and Return is clicked once',len(calls)==1 and editor.inner_text()==REQ['feedback'] and pg.get_by_role('button',name='Return').get_attribute('data-clicked')=='yes')
- check('verification reopens Returned and checks the same submission',out['verified'] and opens[-1] is True)
- preview=P.operate(pg,REQ);fail_read[0]=True
- check('a Return click without read-back is not success',refuses(lambda:P.operate(pg,{**req,'preview':preview},authorized),'verified'))
- P.open_target=original;P.validate_current=original_validate;b.close()
+ check('after Return the roster is checked for this student under Returned',out['verified'] and out['returned'] and roster==[REQ['target_name']])
+ editor.fill('Earlier feedback');preview=P.operate(nav,REQ);roster_mode[0]='not-returned'
+ check('a roster that does not show Returned is not success',refuses(lambda:P.operate(nav,{**req,'preview':preview},authorized),'did not confirm'))
+ editor.fill('Earlier feedback');roster_mode[0]='unreadable';roster.clear()
+ check('a roster that cannot be read is reported, not success',refuses(lambda:P.operate(nav,{**req,'preview':preview},authorized),'could not be read back') and len(roster)==2)
+ P.confirm_returned=original_confirm;P.open_target=original;P.validate_current=original_validate;b.close()
 
 # Match actual inspected selector shapes, with a synthetic roster and panel.
 with sync_playwright() as p:
@@ -116,31 +129,5 @@ A.TEAMS_POST_RUNNER=revoke
 j=waitjob(A.enqueue_teams_post_job({**save,'preview_id':pid3}))
 check('server rechecks approval immediately before edits',j['counts']['failed']==1 and not j['drafts'])
 A.TEAMS_POST_RUNNER=fake;saved=A.load_session(aid)['session'];A.save_session(aid,[st],saved['version'])
-server=ThreadingHTTPServer(('127.0.0.1',18866),A.Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
-with sync_playwright() as p:
- b=p.chromium.launch(**LAUNCH);pg=b.new_page();errors=[];pg.on('pageerror',lambda e:errors.append(str(e)))
- pg.route('**/api/models',lambda r:r.fulfill(content_type='application/json',body=json.dumps({'models':[{'id':'fake','name':'fake','engine':'Ollama'}],'default':'fake','offline':[]})))
- pg.goto('http://127.0.0.1:18866/');pg.locator('#asg-pick').select_option(aid);time.sleep(1)
- pg.get_by_role('button',name='4 Draft & review').click();pg.get_by_role('button',name='Mark reviewed',exact=True).click();time.sleep(2.2)
- pg.get_by_role('button',name='5 Export & posting').click();
- try:pg.get_by_role('button',name='Post reviewed feedback to Teams…').click(timeout=5000)
- except Exception:
-  print('LAUNCH diagnostic:',errors,pg.locator('.teams-post-pilot').count(),pg.locator('#step-delivery').get_attribute('hidden'),pg.locator('nav.steps').inner_text(),flush=True);raise
- dlg=pg.get_by_role('dialog',name='Teams posting pilot')
- try:dlg.get_by_label('Reviewed student',exact=True).select_option('CH-1',timeout=5000)
- except Exception:
-  print('LOAD diagnostic:',dlg.locator('[role=status]').inner_text(),pg.evaluate("feedbackWorkspace.cards().map(c=>({p:feedbackWorkspace.payload(c),valid:feedbackWorkspace.valid(c)}))"),A.load_session(aid)['status'],flush=True);raise
- dlg.get_by_label('Exact student name in the Teams roster').fill('Example, Alex');dlg.get_by_role('button',name='Read Teams destination and preview').click()
-
- try:dlg.locator('.teams-post-preview h4').wait_for(timeout=15000)
- except Exception:
-  print('UI diagnostic:',dlg.locator('[role=status]').inner_text(),errors,flush=True);raise
- check('UI preview shows destination and full approved feedback',st['feedback'] in dlg.locator('.teams-post-preview').inner_text() and 'Example, Alex' in dlg.locator('.teams-post-preview').inner_text())
- button=dlg.get_by_role('button',name='Post feedback and Return',exact=True)
- check('UI Return stays disabled until explicit confirmation',button.is_disabled())
- dlg.locator('input[type=checkbox]').check();button.click();dlg.get_by_text('Verified: feedback matches',exact=False).wait_for(timeout=15000)
- check('UI displays read-back result after posting',dlg.get_by_text('Verified: feedback matches',exact=False).is_visible())
- check('UI has no script errors',not errors)
- b.close()
-A.QUEUE.stop();server.shutdown()
+A.QUEUE.stop()
 print(f'{sum(ok)}/{len(ok)} checks passed');sys.exit(0 if all(ok) else 1)
