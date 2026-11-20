@@ -24,3 +24,6 @@ quality-reports/
 # EarMaster mode: empty templates (no data) may be tracked. Filled-in copies under any other name stay ignored.
 !earmaster_review_log_template.csv
 !earmaster_rules_template.csv
+
+# Real student data (de-identified copies from the intake script). Never commit.
+data/

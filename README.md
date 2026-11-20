@@ -217,3 +217,16 @@ A separate mode that turns EarMaster practice data plus a student's journal into
 5. Rule-based comparison: copy `earmaster_rules_template.csv` to `earmaster_rules.csv`, write your own rules (see `earmaster_rules_README.txt`), then `python3 earmaster_rules.py earmaster_cases/`.
 
 Rubric and standards wording: `earmaster_rubric.md` (change its version line when you edit it). Build notes: `BUILD_LOG.md`.
+
+### Real students: private intake (earmaster_intake.py)
+
+Real student data never goes in this repo (it is public). Everything identified stays in an encrypted disk image (the "vault", e.g. `/Volumes/StudentVault`). Only approved, de-identified copies go to `data/`, which is git-ignored.
+
+1. Create the encrypted disk image in Disk Utility and mount it. The script refuses a vault inside this repo, OneDrive, or an iCloud-synced Desktop/Documents.
+2. `python3 earmaster_intake.py make-key /Volumes/StudentVault --names roster.txt` makes `key.csv` with random codes. Fill in nicknames, grade and consent (yes/no). Optional `others.csv` (name, role: teacher/firstmate) lists staff and First Mates to scrub.
+3. Put the EarMaster teacher export (last 30 days) in the vault as `earmaster.csv`, and one `.txt` per reflection in `reflections/` named like the OneNote name. If the export's column names differ from `earmaster_columns.json`, the script prints the real header row and stops.
+4. `intake` (consent check, matching, cases; anything unmatched or ambiguous is listed in the vault's `check-these.txt`), then `run` (the feedback mode; drafts saved in the vault's `outputs/`), then review the drafts there.
+5. `scrub` makes de-identified copies and `review-sidebyside.html` (yellow = replaced, orange = flagged for you to check). `publish --approve S07 S12` copies approved ones to `data/`; cases with flags need `--approve-flagged` after you check them by hand.
+6. When the course is over: `python3 earmaster_intake.py delete --vault /Volumes/StudentVault` clears `data/`, then the vault (key first). Also delete the disk image file.
+
+Test it only with invented students: `python3 tests/test_intake.py`.

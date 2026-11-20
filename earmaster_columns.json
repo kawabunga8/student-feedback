@@ -1,0 +1,11 @@
+{
+  "_help": "Column NAMES of the EarMaster teacher export (header row only, no student data). Edit the right-hand names to match the real header. If one is wrong the intake script stops and prints the header it found.",
+  "student": "Student",
+  "datetime": "Date",
+  "exercise": "Exercise",
+  "kind": "Type",
+  "assigned_values": ["Lesson", "Assigned"],
+  "score": "Score",
+  "passed": "Passed",
+  "passed_values": ["yes", "true", "1", "passed"]
+}
