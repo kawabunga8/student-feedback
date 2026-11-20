@@ -1,0 +1,22 @@
+{
+  "case_id": "stress-16-long-journal-MADE-UP",
+  "probe": "About 300 words",
+  "grade": 11,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds",
+    "Intervals 2: Perfect 4ths and 5ths",
+    "Intervals 3: 6ths and 7ths",
+    "Rhythm 1: Quarter and eighth notes"
+  ],
+  "self_chosen_exercises": [
+    "Melodic dictation 1",
+    "Chord quality: major vs minor"
+  ],
+  "attempts_30d": 62,
+  "active_days_30d": 15,
+  "attempts_after_pass": 18,
+  "accuracy_first_pct": 59,
+  "accuracy_latest_pct": 83,
+  "journal_entry": "This month I changed how I practise. At the start I just clicked through the exercises as fast as I could and hoped for the best, so my scores did not move much. Then I noticed that the questions I missed were nearly always the same ones, the 3rds and 4ths, and the 6ths and 7ths. So I started slowing down. Before each question I sang the first note out loud, then I tried to sing the second note before I played it, and then I checked myself. That was much slower but my accuracy went up quickly. I also started going back to lessons I had already passed, because I realized passing them once did not mean I really knew them. Sometimes I get the answer right by luck. In band, I tried to listen for the intervals in the melody of our warm-up, and I think I noticed a fourth in the horn part. The rhythm lessons are still my weakest part. I keep losing track in the sixteenth notes. My teacher says my timing might be affected by my Bluetooth headphones, but I am not sure that is the problem. I want to try a wired pair next week. My goal for the next month is to get the 6ths and 7ths reliable, and to hear the chord changes in the song we are playing for the spring concert. I also want to find a better way to keep track of what I miss, maybe a list in my notes.",
+  "first_mate_note": ""
+}

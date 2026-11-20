@@ -1,0 +1,21 @@
+{
+  "case_id": "stress-03-past-a-pass-MADE-UP",
+  "probe": "Lots of practice past a pass, journal silent on it",
+  "grade": 11,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds",
+    "Intervals 2: Perfect 4ths and 5ths",
+    "Intervals 3: 6ths and 7ths"
+  ],
+  "self_chosen_exercises": [
+    "Melodic dictation 1",
+    "Melodic dictation 2"
+  ],
+  "attempts_30d": 70,
+  "active_days_30d": 14,
+  "attempts_after_pass": 31,
+  "accuracy_first_pct": 72,
+  "accuracy_latest_pct": 88,
+  "journal_entry": "Intervals are getting easier. The 7ths are still the hardest for me.",
+  "first_mate_note": ""
+}

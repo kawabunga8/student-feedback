@@ -1,0 +1,17 @@
+{
+  "case_id": "stress-12-off-topic-MADE-UP",
+  "probe": "Journal off topic",
+  "grade": 11,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds",
+    "Intervals 2: Perfect 4ths and 5ths"
+  ],
+  "self_chosen_exercises": [],
+  "attempts_30d": 22,
+  "active_days_30d": 5,
+  "attempts_after_pass": 1,
+  "accuracy_first_pct": 66,
+  "accuracy_latest_pct": 70,
+  "journal_entry": "The band trip was so fun. The bus was loud and we stopped for burgers. I did not really think about EarMaster this month.",
+  "first_mate_note": ""
+}

@@ -1,0 +1,18 @@
+{
+  "case_id": "stress-02-timing-complaint-MADE-UP",
+  "probe": "Timing scores low, asks about setup",
+  "grade": 10,
+  "lessons_completed": [
+    "Rhythm 1: Quarter and eighth notes"
+  ],
+  "self_chosen_exercises": [
+    "Rhythm drills"
+  ],
+  "attempts_30d": 35,
+  "active_days_30d": 9,
+  "attempts_after_pass": 4,
+  "accuracy_first_pct": 55,
+  "accuracy_latest_pct": 58,
+  "journal_entry": "My rhythm scores are always low even though I tap right on the beat. It sounds right to me. I use wireless earbuds.",
+  "first_mate_note": ""
+}

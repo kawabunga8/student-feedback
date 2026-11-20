@@ -1,0 +1,16 @@
+{
+  "case_id": "stress-04-no-past-pass-MADE-UP",
+  "probe": "Zero attempts after a pass",
+  "grade": 9,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds"
+  ],
+  "self_chosen_exercises": [],
+  "attempts_30d": 18,
+  "active_days_30d": 6,
+  "attempts_after_pass": 0,
+  "accuracy_first_pct": 50,
+  "accuracy_latest_pct": 64,
+  "journal_entry": "I only do the lessons Mr. K assigns. The 2nds are okay now, the 3rds are still confusing.",
+  "first_mate_note": ""
+}

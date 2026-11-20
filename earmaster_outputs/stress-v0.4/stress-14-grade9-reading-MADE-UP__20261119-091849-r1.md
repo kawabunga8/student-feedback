@@ -1,0 +1,21 @@
+---
+case_id: stress-14-grade9-reading-MADE-UP
+model: qwen2.5:14b (Ollama)
+rubric_version: v0.1
+prompt_version: earmaster-prompt-v0.4
+timestamp: 2026-11-19T09:18:49-07:00
+run: 1
+status: DRAFT (not reviewed)
+---
+
+**Where am I going?**
+You are working on recognizing major and minor intervals, and you're moving on to chord quality.
+
+**How am I going?**
+Your accuracy improved from 57% on your first attempt to 81% on your latest. You also kept practising after passing some lessons, which is a good habit. You said you used to mix up the intervals but can now tell 3rds from 4ths. What felt hardest?
+
+**Where to next?**
+Next, focus on distinguishing between major and minor chords in your exercises.
+
+_Data used: lessons passed, self-chosen exercises, attempts, active days, attempts after a pass, accuracy trend, journal entry. No practice times were used._
+_DRAFT: not for students until the teacher has reviewed and approved it._

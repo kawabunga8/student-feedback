@@ -1,0 +1,18 @@
+{
+  "case_id": "stress-11-one-line-journal-MADE-UP",
+  "probe": "Almost no journal text",
+  "grade": 9,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds"
+  ],
+  "self_chosen_exercises": [
+    "Rhythm drills"
+  ],
+  "attempts_30d": 25,
+  "active_days_30d": 6,
+  "attempts_after_pass": 2,
+  "accuracy_first_pct": 52,
+  "accuracy_latest_pct": 60,
+  "journal_entry": "idk",
+  "first_mate_note": ""
+}

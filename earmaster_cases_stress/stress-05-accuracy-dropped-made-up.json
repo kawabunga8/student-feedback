@@ -1,0 +1,19 @@
+{
+  "case_id": "stress-05-accuracy-dropped-MADE-UP",
+  "probe": "Latest lower than first",
+  "grade": 10,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds",
+    "Intervals 2: Perfect 4ths and 5ths"
+  ],
+  "self_chosen_exercises": [
+    "Chord quality: major vs minor"
+  ],
+  "attempts_30d": 42,
+  "active_days_30d": 8,
+  "attempts_after_pass": 5,
+  "accuracy_first_pct": 82,
+  "accuracy_latest_pct": 68,
+  "journal_entry": "My scores went down this month and I am not sure why. I tried the harder chord exercise and it felt confusing.",
+  "first_mate_note": ""
+}

@@ -1,0 +1,19 @@
+{
+  "case_id": "stress-15-grade12-reading-MADE-UP",
+  "probe": "Same data as 14, Grade 12",
+  "grade": 12,
+  "lessons_completed": [
+    "Intervals 1: Major and minor 2nds and 3rds",
+    "Intervals 2: Perfect 4ths and 5ths"
+  ],
+  "self_chosen_exercises": [
+    "Chord quality: major vs minor"
+  ],
+  "attempts_30d": 44,
+  "active_days_30d": 10,
+  "attempts_after_pass": 8,
+  "accuracy_first_pct": 57,
+  "accuracy_latest_pct": 81,
+  "journal_entry": "I used to mix up the intervals. Now I can usually tell 3rds from 4ths. Chords are next.",
+  "first_mate_note": ""
+}

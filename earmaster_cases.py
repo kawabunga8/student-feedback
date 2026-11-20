@@ -27,7 +27,7 @@ REQUIRED = {
     "attempts_30d": int, "active_days_30d": int, "attempts_after_pass": int,
     "accuracy_first_pct": (int, float), "accuracy_latest_pct": (int, float), "journal_entry": str,
 }
-OPTIONAL = {"first_mate_note": str}
+OPTIONAL = {"first_mate_note": str, "probe": str, "must_not_say": list}  # probe = a note to yourself on what this case tests (not sent to the model); must_not_say = words the draft must never contain (checked by code)
 FORBIDDEN_HINTS = ("duration", "minutes", "time_spent", "practice_time")
 
 
