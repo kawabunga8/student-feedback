@@ -86,4 +86,8 @@ The one-session engines (`teams_batch.py`, `myschool_batch.py`), their job types
 - Run from a stopped app **and a stopped Ollama** (ports 8765 and 11434). A first run right after restarting can time out once; rerun the single file.
 - `test_server_approvals.py` and `test_assignment_records_ui.py` pass. `test_sessions_ui.py` and `test_myschool_pilot.py` time out at the same step with and without the 2026-11-04 changes (they look for an older posting checkbox that is no longer visible), so they need updating or retiring.
 - Not covered: the "No work found…" dialog's Apply step, and `skills/assignment-followup/scripts/` (they drive real Teams, OneNote, Code.org and chat, so they are checked live by hand). The no-submission field was checked with a direct approval-validation script (a new approval is current, an older one without the field is still current, changing the field voids it).
-
+| `test_observe.py` | Observation model: levels never defaulted, validation and caps, notes for drafting name no level, claim check, counts-only summary, versioned sidecar. |
+| `test_evidence_collect.py` | Evidence listing: metadata only, conservative student/assignment matching, no file opened, symlinks and depth limit, CLI dry run and commit. |
+| `test_observations_http.py` | Observation routes in the real app (temporary HOME): versions and 409, notes, claim check, SharePoint-only https links, origin guard, manifest untouched. |
+| `test_observe_ui.py` | Observe screen in a browser against a stand-in server: nothing pre-filled, autosave, copy-notes without duplication, no HTML injection. |
+| `test_sharepoint_listing.py` | SharePoint listing export: address checks (https, sharepoint.com, /sites/ only), list items to entries (Submitted files only), counts-only output, owner-only file, no browser. |

@@ -555,3 +555,10 @@ Claims are per local assignment and MySchool course ID. A failure before write a
 - **Collection and write tools** live in `skills/assignment-followup/scripts/`: one read-only collector and two write tools (`teams_chat_send.py`, `onenote_write_pages.py`) that take an approved plan file. They share the app's Chrome profile and the browser lock, and none of them is an app endpoint: they are teacher-run, plan-in/result-out scripts.
 - **OneNote page lists** are returned only when two reads a moment apart agree, so a list still showing the previous student's pages is never accepted.
 
+## Performance observations (2026-11-14, built; synthetic tests only)
+
+For video/audio submissions the teacher records levels and notes per criterion (`observe.py`, `ui/observe.js`, routes
+`/api/observations` and `/api/observation-claims`). Stored in `observations.json` beside the session manifest; the manifest
+and SESSION_TEXT are untouched. Only the typed notes (never levels, names or media) reach the local model, through the
+existing Notes box. `evidence_collect.py` lists submitted files as metadata only. Design and plan:
+BAND-PERFORMANCE-EVIDENCE-DESIGN.md, SHAREPOINT-COLLECTION-PLAN.md. Not yet used on a real class.

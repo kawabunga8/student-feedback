@@ -26,6 +26,31 @@ See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the developme
 
 **Verified live (2026-11-03, ICT 9 Q1 Task 2, 18 students):** posting and Returning feedback in Teams, and saving levels, comments and Graded status in MySchool, each confirmed by reading the destination back. Not verified: what a Teams Return sends to the student, behaviour on other assignment layouts, MySchool assignments with several criteria, and the Playwright suites for the new dialogs (they need a browser install and were not run).
 
+## Performance observations (optional; for video and audio work)
+
+For work you watch or listen to yourself (Sr Band recordings, presentations), **Draft & review > Performance observations**
+lets you pick a level and write a short note per success criterion, plus strengths and one next step. Nothing is
+pre-filled: a level exists only if you pick it. No recording is opened, played, transcribed or uploaded by the app.
+**Use my notes in this student's Notes box** copies your typed notes (never the levels) into the existing Notes box that
+local drafting already reads; **Check draft against my notes** lists draft sentences that share no wording with your notes
+(a prompt to look again, not a verdict). Observations autosave to `observations.json` in the assignment's Assessment folder
+(outside git) and need a saved session first. Design: [BAND-PERFORMANCE-EVIDENCE-DESIGN.md](BAND-PERFORMANCE-EVIDENCE-DESIGN.md).
+
+Optional evidence list: `python3 evidence_collect.py --root <folder shaped like Submitted files/<student>/<assignment>/...>
+--course "<course>" --quarter N --title "<assignment>" --out "<session folder>" [--commit]` records each student's submitted
+files as metadata only (name, kind, size, link) in `evidence.json`; the app needs to be running for the roster. Dry run by
+default; prints counts only (`--verbose` adds names). Student or assignment folders that do not match exactly once are
+flagged, never guessed. To make the listing without the OneDrive sync: `python3 sharepoint_listing.py --site https://rcschool.sharepoint.com/sites/<team site>`
+opens the team site in the app's automated Chrome profile (same profile and lock as the Teams and OneNote readers; sign in
+there once if asked), makes read-only list requests from inside that page, and writes the file listing to
+`~/Library/Application Support/student-feedback/evidence-listings/<site>.entries.json` (owner-only, outside git). It prints
+counts only. Then run `evidence_collect.py --entries <that file> ...` as above. Names, sizes, dates and links only: no file
+is opened or downloaded. Not yet run live: the first real run should be a dry run on one class.
+
+Code: `observe.py`, `evidence_collect.py`, `sharepoint_listing.py`, `ui/observe.js`, routes in `app.py`; tests:
+`tests/test_observe.py`, `test_evidence_collect.py`, `test_sharepoint_listing.py`, `test_observations_http.py`, `test_observe_ui.py`. Built 2026-11-14
+with synthetic tests only; **not yet tried on a real class**, and RCS approval for real use must be confirmed first.
+
 ## Class patterns (optional)
 
 In the review step, **Class patterns** checks each student's work against the "Looking for" criteria in the assignment description, on the local model, then counts how many students met each criterion. The report lists criteria and counts only: no names and no work text. A criterion checked for fewer than 5 students is hidden. Nothing is saved (results are lost on reload), nothing is posted, and drafting is unchanged. It counts what the automatic checklist found, so it is a prompt for your own review, not an assessment; review it before using or sharing it. Code: `class_patterns.py`, `ui/patterns.js`, two routes in `app.py`; tests: `tests/test_class_patterns.py`, `tests/test_class_patterns_app.py`. Not yet tried in the live page with a real model.

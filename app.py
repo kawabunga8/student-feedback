@@ -38,6 +38,9 @@ import onenote_class
 import onenote_read    # one typed OneNote page; the browser part is started in its own process
 import teams_read      # parsers and validators only; the browser part is started in its own process
 import jobs
+import observe        # teacher observations for performance evidence (video/audio): notes only, no media
+import evidence_runner  # background 'Load evidence list from SharePoint' (metadata only)
+import sharepoint_listing
 
 HOST, PORT = "127.0.0.1", 8765
 STANDARDS_DIR = Path(__file__).parent / "standards"  # drop learning-standards PDFs here
@@ -598,6 +601,75 @@ def class_patterns_for(p):
             for r in (p.get("rows") or [])[:500] if isinstance(r, dict)]
     summary = cpat.summarize(rows, criteria)
     return {"summary": summary, "markdown": cpat.render_markdown(summary, str(p.get("title", ""))[:120])}
+
+
+def _observation_folder(aid):
+    """The assignment's saved-session folder, only if it already exists (observations live beside the session)."""
+    rec = load_assignment_record(aid)
+    rel, d = session_folder(aid, rec)
+    if not d.is_dir():
+        raise ValueError("Save the assessment session first (open the assignment and add its students), then record observations.")
+    return rec, d
+
+
+def _evidence_view(d):
+    """Evidence metadata saved by evidence_collect (name, kind, size, link): links kept only if https on SharePoint."""
+    raw = _read_json(d / "evidence.json", {})
+    stu = raw.get("students") if isinstance(raw, dict) and isinstance(raw.get("students"), dict) else {}
+    out = {}
+    for sid, v in list(stu.items())[:500]:
+        items = []
+        for i in ((v or {}).get("items") or [])[:200]:
+            if not isinstance(i, dict):
+                continue
+            u = urllib.parse.urlsplit(str(i.get("url") or ""))
+            url = u.geturl() if u.scheme == "https" and u.hostname and u.hostname.endswith(".sharepoint.com") and not u.username else ""
+            items.append({"name": str(i.get("name", ""))[:200], "kind": str(i.get("kind", "other"))[:12],
+                          "bytes": int(i.get("bytes") or 0), "url": url})
+        out[str(sid)[:120]] = items
+    return out
+
+
+def observations_view(aid):
+    rec, d = _observation_folder(aid)
+    store = observe.load_store(d)
+    crit = _criteria_of(rec)
+    return {"version": store["version"], "students": store["students"],
+            "criteria": [{"id": str(i), "text": t} for i, t in enumerate(crit)],
+            "notes": {k: observe.to_notes(v, crit) for k, v in store["students"].items()},
+            "evidence": _evidence_view(d), "levels": list(observe.LEVELS)}
+
+
+def observations_save(aid, students, base_version):
+    rec, d = _observation_folder(aid)
+    observe.save_store(d, students, base_version)
+    return observations_view(aid)
+
+
+def observation_claims(p):
+    """Sentences of a draft that share nothing with the teacher's notes (a prompt to look again, not a verdict)."""
+    rec, d = _observation_folder(str(p.get("assignment", "")))
+    store = observe.load_store(d)
+    key = str(p.get("key", ""))[:120]
+    return {"unsupported": observe.claim_check(str(p.get("draft", ""))[:20000], store["students"].get(key) or {})[:20]}
+
+
+EVIDENCE = evidence_runner.Runner()
+
+
+def evidence_listing_start(body):
+    """Start the read-only SharePoint listing for an assignment's class team. Needs a saved session (evidence.json lives
+    beside it). The site address must be an https sharepoint.com team site."""
+    aid = str(body.get("assignment", ""))
+    rec, d = _observation_folder(aid)
+    try:
+        sharepoint_listing.check_site_url(str(body.get("site", "")))
+    except teams_read.ReadError as e:
+        raise ValueError(str(e))
+    course = (rec.get("course") or {}).get("name", "")
+    m = re.search(r"\d", str(rec.get("term") or ""))
+    quarter = m.group(0) if m else ""
+    return EVIDENCE.start(aid, str(body.get("site", "")).strip(), d, str(rec.get("title") or ""), lambda: roster_for(course, quarter))
 
 
 def term_is_closing(term_label, today=None):
@@ -2539,7 +2611,7 @@ $("#go").onclick = async () => {
   $("#status").textContent = (window.feedbackStopRequested ? "Drafting stopped after " + i + " students. Existing drafts remain available." : failed ? "Drafting: " + failed + " of " + cards.length + " failed (see the red messages)." : "Drafting finished. Edit the feedback, then mark it reviewed. Posting is a separate step.") + (skipped.length ? " Skipped " + skipped.length + " already returned in Teams." : "");
   $("#go").disabled = false; $("#dl").disabled = false; $("#dlteams").disabled = false;
 };
-</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/attachments.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/patterns.js"></script><script src="/ui/vision.js"></script></main></body></html>"""
+</script><link rel="stylesheet" href="/ui/workspace.css"><script src="/ui/workspace.js"></script><script src="/ui/assignment.js"></script><script src="/ui/jobs.js"></script><script src="/ui/collect.js"></script><script src="/ui/attachments.js"></script><script src="/ui/myschool.js"></script><script src="/ui/teams_post.js"></script><script src="/ui/myschool_create.js"></script><script src="/ui/overview.js"></script><script src="/ui/patterns.js"></script><script src="/ui/vision.js"></script><script src="/ui/observe.js"></script></main></body></html>"""
 
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -2566,7 +2638,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html")
-        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/attachments.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/patterns.js", "/ui/vision.js"):
+        elif self.path in ("/ui/workspace.css", "/ui/workspace.js", "/ui/assignment.js", "/ui/jobs.js", "/ui/collect.js", "/ui/attachments.js", "/ui/myschool.js", "/ui/teams_post.js", "/ui/myschool_create.js", "/ui/overview.js", "/ui/patterns.js", "/ui/vision.js", "/ui/observe.js"):
             asset = HERE / self.path.lstrip("/")
             self._send(200, asset.read_bytes(), "text/css" if asset.suffix == ".css" else "text/javascript")
         elif self.path == "/api/courses":
@@ -2627,6 +2699,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"error": "Job not found."})
             except Exception as e:
                 self._send(200, {"error": f"{type(e).__name__}: {e}"})
+        elif self.path.startswith("/api/evidence-listing?"):
+            try:
+                aid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("assignment", [""])[0]
+                load_assignment_record(aid)
+                self._send(200, EVIDENCE.status(aid))
+            except (ValueError, FileNotFoundError):
+                self._send(200, {"error": "Assignment not found."})
+        elif self.path.startswith("/api/observations?"):
+            try:
+                aid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("assignment", [""])[0]
+                self._send(200, observations_view(aid))
+            except (ValueError, FileNotFoundError) as e:
+                self._send(200, {"error": str(e) if isinstance(e, ValueError) and "session" in str(e) else "Assignment not found."})
+            except OSError as e:
+                self._send(200, {"error": f"Can't read the saved observations: {e.strerror or e}"})
         elif self.path.startswith("/api/session?"):
             try:
                 aid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("assignment", [""])[0]
@@ -2701,7 +2788,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"students": [{"name": a, "work": b, "feedback": c} for a, b, c in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
-        if self.path in ("/api/assignments", "/api/class-map", "/api/session", "/api/session-move") or self.path.startswith("/api/jobs"):
+        if self.path in ("/api/assignments", "/api/class-map", "/api/session", "/api/session-move", "/api/observations", "/api/observation-claims", "/api/evidence-listing") or self.path.startswith("/api/jobs"):
             # Saving needs a JSON request from this app's own page: another website can't send one without the
             # browser asking first (a preflight this server never approves), and a stated Origin must be this app.
             origin = self.headers.get("Origin")
@@ -2739,6 +2826,16 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         raise ValueError("unknown action")
                     return self._send(200, {"job": _job_view(job)})
+                if self.path == "/api/observations":
+                    try:
+                        return self._send(200, observations_save(str(body.get("assignment", "")), body.get("students"), body.get("baseVersion")))
+                    except observe.ObservationConflict as c:
+                        return self._send(409, {"error": "These observations were saved somewhere else after this page opened them.",
+                                                "conflict": True, "current": c.current})
+                if self.path == "/api/observation-claims":
+                    return self._send(200, observation_claims(body))
+                if self.path == "/api/evidence-listing":
+                    return self._send(200, evidence_listing_start(body))
                 if self.path == "/api/session-move":
                     return self._send(200, move_session(str(body.get("assignment", ""))))
                 if self.path == "/api/session":
