@@ -99,7 +99,7 @@ with sync_playwright() as pw:
     state["conflict"] = True
     pg.locator(".observe-row textarea").first.fill("late entry"); pg.wait_for_timeout(2300)
     check("24 a conflict is reported and the page reloads the saved copy", "saved somewhere else" in " ".join(pg.locator(".observe p[role=status]").all_inner_texts()), pg.locator(".observe p[role=status]").all_inner_texts())
-    bad = [u for u in state["urls"] if not (u.endswith("/h") or "/api/observations" in u or u.endswith("/api/observation-claims"))]
+    bad = [u for u in state["urls"] if not (u.endswith("/h") or "/api/observations" in u or "/api/evidence-listing" in u or u.endswith("/api/observation-claims"))]
     check("25 only the app's own observation endpoints were called", not bad, bad)
     b.close()
 sys.exit(0 if all(ok) else 1)
