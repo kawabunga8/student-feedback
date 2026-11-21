@@ -57,6 +57,7 @@ MySchool pilot: `TEST_BROWSER_CHANNEL=chrome ~/.venvs/student-feedback-tools/bin
 | `test_posting_jobs.py` | Teams/MySchool batch job handlers: partial runs, cancel, uncertain outcomes, approval changed (10 checks) |
 | `test_rubric_drafting.py` | Saved rubric criteria, setting persistence, stale drafts/approvals and rejected level wording |
 | `test_teams_rubric.py` | Separate rubric parsing and supported dialog controls |
+| `test_team_assessment.py` | Team assessment dialog: greyed students never overwritten, required fields, one level and comment to each member, no level chosen for you, one member's edit voids only their review (20 checks) |
 | `test_onenote_collect.py` | Typed-page collection, batch outcomes, roster checks and assignment ownership |
 | `test_teams_students.py` | Complete roster status reads, privacy, jobs and assignment switching |
 | `test_teams_grading_spike.py` | Field labels exclude contents/values, masking and read-only inspection |

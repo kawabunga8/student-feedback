@@ -30,11 +30,12 @@
   const markAll = make('button', '', 'Mark all reviewed'); markAll.type = 'button'; toolbar.append(markAll);
   const unmarkAll = make('button', '', 'Unreview all'); unmarkAll.type = 'button'; toolbar.append(unmarkAll);
   const noWork = make('button', '', 'Record no submission…'); noWork.type = 'button'; noWork.title = 'Select students with no submission, record the sources you checked, and review a shared comment.'; toolbar.append(noWork);
+  const teamBtn = make('button', '', 'Team assessment…'); teamBtn.type = 'button'; teamBtn.title = 'Give the members of a group project the same level and comment, from one piece of group work you assessed yourself.'; toolbar.append(teamBtn);
   const postAll = make('button', 'primary', 'Preview Teams posting…'); postAll.type = 'button'; postAll.title = 'Preview reviewed feedback for Teams; posting requires a separate confirmation.'; toolbar.append(postAll);
   const search = make('input', 'student-search'); search.placeholder = 'Find a student…'; search.setAttribute('aria-label','Find a student'); toolbar.append(search);
   const actionGroup=(label,controls)=>{const group=make('div','review-action-group');group.setAttribute('role','group');group.setAttribute('aria-label',label);group.append(make('span','review-action-label',label),...controls);toolbar.append(group);};
   actionGroup('Draft feedback',[document.getElementById('add'),document.getElementById('go'),pause]);
-  actionGroup('Review assessments',[markAll,unmarkAll,noWork]);
+  actionGroup('Review assessments',[markAll,unmarkAll,noWork,teamBtn]);
   actionGroup('Teams posting',[postAll]);
   toolbar.append(search);
   review.append(document.getElementById('students'));
@@ -331,6 +332,49 @@
       dlg.close(); dlg.remove();
     };
     dlg.append(h, make('p', '', 'Records that no submission was found (what you checked and when), sets the level and comment you choose for the students ticked, and marks them reviewed. Read the shared comment before applying it. Posting is a separate step with its own preview and confirmation.'), list, checked, make('label', '', 'Level (optional; none is chosen for you)'), lvl, make('label', '', 'Comment (Teams and MySchool)'), txt, notice, apply, close);
+    document.body.append(dlg); dlg.showModal();
+  };
+  // Team assessment: one piece of group work (for example a team video) that the teacher assessed, one level and one comment for
+  // each member. Each member keeps their own card and their own approval, so posting is unchanged and an edit to one member's
+  // card voids only that member's review. Nothing is drafted and nothing is posted here. The comment starts empty and no level is
+  // chosen for you. Students who already have work or feedback are listed but never overwritten. The team name and what was
+  // assessed go into each member's Work (the evidence), so the record is true and editing it voids the review as any edit does.
+  teamBtn.onclick = () => {
+    refresh();
+    const why = c => !c.dataset.rid ? 'not matched to Course Hub' : !reviewableIdentity(c) ? 'listed twice' : c.querySelector('.work').value.trim() ? 'already has work' : c.querySelector('.out:not(.err)') ? 'already has feedback' : '';
+    const dlg = make('dialog', 'team-dialog'); const h = make('h3', '', 'Team assessment');
+    const list = make('div');
+    const picks = cards().map(c => { const r = why(c), l = make('label'), cb = make('input'); l.style.display = 'block'; cb.type = 'checkbox'; cb.disabled = !!r; if(r) l.style.opacity = '0.6'; l.append(cb, ' ' + c.querySelector('.name').value + (r ? ' (' + r + ')' : '')); list.append(l); return {c, cb, r}; });
+    const eligible = picks.filter(x => !x.r).length;
+    if(!picks.length) list.textContent = 'No students are loaded.'; else if(!eligible) list.append(make('p', '', 'Every student already has work or feedback, or is not matched.'));
+    const field = (label, el) => { const l = make('label', '', label); l.style.display = 'block'; el.style.width = '100%'; return [l, el]; };
+    const teamName = make('input'); teamName.placeholder = 'for example 3 or Blue'; teamName.setAttribute('aria-label', 'Team name');
+    const evidence = make('input'); evidence.placeholder = 'what you assessed: link or file name, and the date you watched it'; evidence.setAttribute('aria-label', 'What was assessed');
+    const lvl = make('select'); const src = cards()[0]; [...(src ? src.querySelectorAll('.level option') : [])].forEach(o => { const x = make('option', '', o.textContent); x.value = o.value || o.textContent; if(!o.value && o.textContent.startsWith('No level')) x.value = ''; lvl.append(x); });   // any level, none chosen for you
+    const txt = make('textarea'); txt.rows = 5; txt.setAttribute('aria-label', 'Comment (Teams and MySchool)');
+    const notice = make('p'); notice.setAttribute('role', 'status');
+    const apply = make('button', 'primary', 'Apply and mark reviewed'); apply.type = 'button'; apply.disabled = !eligible;
+    const close = make('button', '', 'Close'); close.type = 'button'; close.onclick = () => { dlg.close(); dlg.remove(); };
+    apply.onclick = () => {
+      const chosen = picks.filter(x => x.cb.checked).map(x => x.c), name = teamName.value.trim(), ev = evidence.value.trim(), text = txt.value.trim();
+      if(!chosen.length) { notice.textContent = 'Select at least one student.'; return; }
+      if(!name) { notice.textContent = 'Enter the team name.'; return; }
+      if(!ev) { notice.textContent = 'Enter what you assessed, so each record shows the evidence.'; return; }
+      if(!text) { notice.textContent = 'Enter the comment you have reviewed.'; return; }
+      if(!window.insertDraft) { notice.textContent = 'The page is still loading. Close this window and try again.'; return; }
+      if(chosen.some(c => why(c))) { notice.textContent = 'A selected student changed. Close this window and check the selection again.'; return; }
+      const work = 'Team ' + name + ': ' + ev;
+      chosen.forEach(c => {
+        const w = c.querySelector('.work'); w.value = work; w.dispatchEvent(new Event('input', {bubbles: true}));
+        const l = c.querySelector('.level'); l.value = lvl.value; l.dispatchEvent(new Event('change', {bubbles: true}));
+        window.insertDraft(c, text, null);
+        const m = c.querySelector('.myschool-comment'); if(m) { m.value = text; m.dispatchEvent(new Event('input', {bubbles: true})); }
+      });
+      refresh();
+      const at = new Date().toISOString(); chosen.filter(reviewable).forEach(c => approvals.set(c, {bound: JSON.stringify(payload(c)), reviewed_at: at})); refresh();
+      dlg.close(); dlg.remove();
+    };
+    dlg.append(h, make('p', '', 'Gives each member ticked the same level and comment, and records what you assessed as their work. Read the comment before applying it. Each member keeps their own card, so you can still change one member afterwards. Posting is a separate step with its own preview and confirmation.'), list, ...field('Team name', teamName), ...field('What was assessed', evidence), make('label', '', 'Level (optional; none is chosen for you)'), lvl, make('label', '', 'Comment (Teams and MySchool)'), txt, notice, apply, close);
     document.body.append(dlg); dlg.showModal();
   };
   unmarkAll.onclick = () => { cards().forEach(c => approvals.delete(c)); refresh(); };
