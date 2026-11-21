@@ -1,1 +1,1 @@
-case_id,levels_targeted (task/process/self-regulation/self),clear_next_step (Y/N),person_level_praise_present (Y/N),data_named (Y/N),factual_errors,what_shingo_changed,review_minutes,verdict (send/edit/reject)
+case_id,method (AI/rules),prompts_answered (e.g. 5/7),accurate_to_data (Y/N),factual_errors,linked_to_student_goal (Y/N),one_concrete_next_practice_step (Y/N),levels_targeted (task/process/self-regulation/self),person_level_praise_present (Y/N),data_named (Y/N),what_shingo_changed,review_minutes,coding_minutes (rules rows only),verdict (send/edit/reject)
