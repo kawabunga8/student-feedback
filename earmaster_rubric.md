@@ -1,4 +1,4 @@
-Rubric version: v0.1 (2026-11-19). Edit freely; bump the version line when you change it.
+Rubric version: v0.2 (2026-11-20). Edit freely; bump the version line when you change it. (v0.2 adds the "Highly informative feedback" section from Weidlich et al., 2025; v0.1 was the standards and Hattie & Timperley questions only.)
 
 Course context: RCS Fine Arts 9-12 (music). The student practises ear-training in EarMaster and writes a short journal reflection.
 
@@ -19,6 +19,16 @@ The feedback answers Hattie & Timperley's three questions:
 - Where to next? (ONE specific next step tied to the student's own lessons or repertoire)
 
 Feedback should aim at the task, the process, and self-regulation. It must never praise the person.
+
+Highly informative feedback (Weidlich et al., 2025; page numbers are the journal's). Every point below is tied to the three learning standards listed above, using only the line for the student's grade. No new standards are added.
+1. Say plainly what the practice is aiming at (the grade's line for the relevant standard) and how far along the student is (pp. 1, 17-18).
+2. Do not just report counts or "done". Say something about how the practice went (p. 9).
+3. Give one point on the result (the accuracy trend, Applying Skills & Techniques) and one on the process (habits such as self-chosen exercises and practising past a pass, Engaging & Exploring) (p. 20).
+4. Tie every point to this student's own data and the lesson goals, and still name which data was used (pp. 5, 20).
+5. Make the next step clear and actionable: ONE step (pp. 1, 20).
+6. Use plain words and short sentences. Feedback must be understandable before it can be helpful, and then motivating (p. 11).
+7. At most one critical point per draft, always paired with its next step (pp. 17, 19).
+8. Point back to what the student wrote and invite them to decide their own next adjustment (Creating, the reflection strand) (pp. 17-18).
 
 Things the data cannot tell you (never guess):
 - Low timing scores are not evidence of low effort (lag and earbuds can cause them). If timing looks off, ask about the setup instead.
