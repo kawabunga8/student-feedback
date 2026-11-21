@@ -15,6 +15,11 @@ Fields
   accuracy_latest_pct       accuracy % on the latest attempt
   journal_entry             the student's reflection text (made up)
   first_mate_note           optional check note (may be "")
+  goal_stated               optional, coded by hand for the rules: "yes" or "no"
+  area_named                optional, coded by hand for the rules: a short word such as "rhythm", or ""
+  prompts_answered          optional, coded by hand: how many reflection prompts were answered
+  prompts_on_page           optional, coded by hand: how many prompts the page had (give both or neither)
+  (the four coded fields are NEVER sent to the AI mode; the AI reads the journal itself)
 
 There is deliberately NO practice-duration field: EarMaster's time logs are unreliable.
 """
@@ -27,7 +32,8 @@ REQUIRED = {
     "attempts_30d": int, "active_days_30d": int, "attempts_after_pass": int,
     "accuracy_first_pct": (int, float), "accuracy_latest_pct": (int, float), "journal_entry": str,
 }
-OPTIONAL = {"first_mate_note": str, "probe": str, "must_not_say": list}  # probe = a note to yourself on what this case tests (not sent to the model); must_not_say = words the draft must never contain (checked by code)
+CODED = {"goal_stated": str, "area_named": str, "prompts_answered": int, "prompts_on_page": int}  # R3: coded by hand for the RULES mode only; never sent to the AI (see earmaster_feedback.facts_block)
+OPTIONAL = {"first_mate_note": str, "probe": str, "must_not_say": list, **CODED}  # probe = a note to yourself on what this case tests (not sent to the model); must_not_say = words the draft must never contain (checked by code)
 FORBIDDEN_HINTS = ("duration", "minutes", "time_spent", "practice_time")
 
 
@@ -43,7 +49,18 @@ def validate(case):
         if key not in REQUIRED and key not in OPTIONAL:
             problems.append(f"unknown field: {key}" + (" (no practice durations: time logs are unreliable)"
                                                         if any(h in key.lower() for h in FORBIDDEN_HINTS) else ""))
+    for key, typ in CODED.items():
+        if key in case and (not isinstance(case[key], typ) or isinstance(case[key], bool)):
+            problems.append(f"wrong type for {key}")
     if not problems:
+        if "goal_stated" in case and case["goal_stated"] not in ("yes", "no"):
+            problems.append("goal_stated must be yes or no")
+        if len(case.get("area_named", "")) > 30:
+            problems.append("area_named must be a short word or phrase (30 characters at most)")
+        if ("prompts_answered" in case) != ("prompts_on_page" in case):
+            problems.append("prompts_answered and prompts_on_page go together")
+        elif "prompts_answered" in case and not 0 <= case["prompts_answered"] <= case["prompts_on_page"]:
+            problems.append("prompts_answered must be between 0 and prompts_on_page")
         if case["grade"] not in (9, 10, 11, 12):
             problems.append("grade must be 9, 10, 11 or 12")
         if case["active_days_30d"] > 30 or case["active_days_30d"] < 0:

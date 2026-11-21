@@ -22,6 +22,10 @@ def fields(case):
     f["lessons_completed_count"] = len(case["lessons_completed"])
     f["self_chosen_count"] = len(case["self_chosen_exercises"])
     f.setdefault("first_mate_note", "")
+    for k in ("goal_stated", "area_named"):  # coded fields: uncoded means "no answer", so a rule on them does not fire
+        f.setdefault(k, "")
+    for k in ("prompts_answered", "prompts_on_page"):
+        f.setdefault(k, None)
     return f
 
 
@@ -31,6 +35,8 @@ def holds(f, field, op, value):
     if field not in f:
         raise ValueError(f"unknown field '{field}'")
     have = f[field]
+    if have is None:
+        return False  # an uncoded number never satisfies a condition
     if op == "contains":
         return value.strip().lower() in str(have).lower()
     if op not in OPS:

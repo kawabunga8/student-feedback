@@ -214,7 +214,7 @@ A separate mode that turns EarMaster practice data plus a student's journal into
 2. Try one case: `python3 earmaster_feedback.py earmaster_cases/sample-01.json`
 3. Run every case: `python3 earmaster_feedback.py earmaster_cases/` (drafts saved in `earmaster_outputs/` with case, model, rubric and prompt version, timestamp)
 4. Review each draft: `python3 earmaster_review_log.py earmaster_cases/` makes `earmaster_review_log.csv` with two rows per case (AI and rules) and fills in case_id, method and prompts answered; you fill in the rest. For real cases add `--out` pointing into the vault.
-5. Rule-based comparison: copy `earmaster_rules_template.csv` to `earmaster_rules.csv`, write your own rules (see `earmaster_rules_README.txt`), then `python3 earmaster_rules.py earmaster_cases/`.
+5. Rule-based comparison: copy `earmaster_rules_template.csv` to `earmaster_rules.csv`, write your own rules (see `earmaster_rules_README.txt`), then `python3 earmaster_rules.py earmaster_cases/`. Optionally code each reflection by hand (`goal_stated`, `area_named`, `prompts_answered`, `prompts_on_page`) so rules can test them; these are never sent to the AI mode, and the minutes you spend go in the review log's `coding_minutes` column.
 
 Rubric and standards wording: `earmaster_rubric.md` (change its version line when you edit it). Build notes: `BUILD_LOG.md`.
 
