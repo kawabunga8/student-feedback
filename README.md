@@ -22,7 +22,7 @@ The app follows Design → Setup → Collect → Draft & review → Export & pos
 - Post to Teams and save to MySchool, each for one student or the whole class, on one engine per destination that reads and writes in a single Chrome session. Every write is confirmed once, re-checks that student's approval at the moment of writing, and is verified by reading the destination back. See the two sections below.
 - Image transcription is an experimental local-vision prototype. Check every line yourself. Open a saved assignment first: each image preview is bound to it, and switching assignments discards the preview instead of adding it to the wrong class.
 
-See [WORKFLOW.md](WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
+See [docs/WORKFLOW.md](docs/WORKFLOW.md) for current verification limits and the development log. One typed notebook page and one Forms quiz export have been verified live; those checks do not cover every submission type.
 
 **Verified live (2026-11-03, ICT 9 Q1 Task 2, 18 students):** posting and Returning feedback in Teams, and saving levels, comments and Graded status in MySchool, each confirmed by reading the destination back. Not verified: what a Teams Return sends to the student, behaviour on other assignment layouts, MySchool assignments with several criteria, and the Playwright suites for the new dialogs (they need a browser install and were not run).
 
@@ -34,7 +34,7 @@ pre-filled: a level exists only if you pick it. No recording is opened, played, 
 **Use my notes in this student's Notes box** copies your typed notes (never the levels) into the existing Notes box that
 local drafting already reads; **Check draft against my notes** lists draft sentences that share no wording with your notes
 (a prompt to look again, not a verdict). Observations autosave to `observations.json` in the assignment's Assessment folder
-(outside git) and need a saved session first. Design: [BAND-PERFORMANCE-EVIDENCE-DESIGN.md](BAND-PERFORMANCE-EVIDENCE-DESIGN.md).
+(outside git) and need a saved session first. Design: [docs/BAND-PERFORMANCE-EVIDENCE-DESIGN.md](docs/BAND-PERFORMANCE-EVIDENCE-DESIGN.md).
 
 Optional evidence list: `python3 evidence_collect.py --root <folder shaped like Submitted files/<student>/<assignment>/...>
 --course "<course>" --quarter N --title "<assignment>" --out "<session folder>" [--commit]` records each student's submitted
@@ -203,8 +203,8 @@ Run the write tools only on a plan the teacher approved line by line.
 - `standards/` - 2026-27 learning-standards PDFs (parsed on load).
 - `courses.json` - fallback course list, quarter dates, department rules.
 - `.env.local` - Course Hub URL/key (git-ignored).
-- `WORKFLOW.md` - assessment workflow plan and status. `ARCHITECTURE.md` - how the pieces fit.
-  `TEAMS-ASSIGNMENT-SETUP.md` - setting up assignments. `skills/` - maintained agent workflows linked above.
+- `docs/` - design and planning docs: `WORKFLOW.md` (assessment workflow plan and status), `ARCHITECTURE.md` (how the pieces fit),
+  `TEAMS-ASSIGNMENT-SETUP.md` (setting up assignments) and the collection and band-evidence designs. `skills/` - maintained agent workflows linked above.
 
 ## EarMaster reflection feedback (optional mode; made-up cases only)
 

@@ -3,7 +3,7 @@
 Works on `entries`: [{"path": "<student>/<assignment folder>/[<subfolder>/]<file>", "bytes": int, "modified": str,
 "url": str}] with paths relative to the library's `Submitted files` folder. Entries come from either a local folder
 (entries_from_folder, e.g. a synced or downloaded copy) or a read-only SharePoint listing made in the signed-in page.
-No file is ever opened, downloaded, transcribed or thumbnailed here. See BAND-PERFORMANCE-EVIDENCE-DESIGN.md.
+No file is ever opened, downloaded, transcribed or thumbnailed here. See docs/BAND-PERFORMANCE-EVIDENCE-DESIGN.md.
 
 Matching is conservative, like the Teams reader: a student folder that does not match the roster exactly once, or an
 assignment folder that does not match the title exactly once, is flagged, never guessed.

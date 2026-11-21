@@ -1,4 +1,4 @@
-"""Teacher observations for performance evidence (video, audio) - see BAND-PERFORMANCE-EVIDENCE-DESIGN.md.
+"""Teacher observations for performance evidence (video, audio) - see docs/BAND-PERFORMANCE-EVIDENCE-DESIGN.md.
 
 Pure functions plus a small sidecar store. No network, no browser, no model, no media is ever read here.
 The teacher watches the evidence and records, per rubric criterion, a level and a short note. Nothing is ever

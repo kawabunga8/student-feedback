@@ -3,7 +3,7 @@
 Starts sharepoint_listing.py in its own process (it owns the browser and the profile lock), then matches the listing to the
 roster and saves evidence.json (metadata only) beside the assignment's session. One run at a time. Status is counts and
 plain messages only: no student or file names are ever put in it. The entries file the listing writes is deleted once
-evidence.json is saved. See BAND-PERFORMANCE-EVIDENCE-DESIGN.md.
+evidence.json is saved. See docs/BAND-PERFORMANCE-EVIDENCE-DESIGN.md.
 """
 import json
 import os
