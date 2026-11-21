@@ -112,6 +112,24 @@ counts-only output contains no names. Add to `run_all.py` automatically (glob). 
 6. Later options: image transcription for pictures, audio-submission handling for Band (a different workflow: rubric
    + teacher listening notes, not text drafting).
 
+## Built so far (2026-11-14, branch `sharepoint-collect`)
+Step 3 is done, tested on synthetic folders only (no real class data has been read):
+- `sharepoint_collect.py`: `--list-assignments`; dry run / `--commit`; `--hydrate`, `--since`, `--max-mb`,
+  `--counts-only`, `--roster-file`. Handles both layouts, since the real one is still unknown.
+- `tools/deidentify_shape.py`: name-free copy of a synced folder's shape for checking the matcher against real quirks
+  (replaces Step 2's `find` command when the shape is to be shared with Claude).
+- Tests: `tests/test_sharepoint_collect.py` (38 checks), `tests/test_deidentify_shape.py` (16 checks).
+
+Departures from the design above:
+- Design 7: does not call `stage_submissions.stage()`, which overwrites silently. It reuses `match_student`,
+  `staged_path` and `fetch_roster` and writes the same file names, but never overwrites: identical work is skipped,
+  differing work goes to `_CHANGED_<First_Last>.txt`. Also writes `_NON_TEXT_SUBMISSIONS.txt`.
+- Year folder: `stage()` defaults to the calendar year ("2026"); this takes the school year ("2026-27") from the app's
+  `/api/courses`, or `--year`.
+- Students with only non-text, cloud-only or ambiguous submissions count as submitted (not "missing"); a student with
+  two matching folders, or two folders for one student, is flagged rather than picked.
+- No sync config file yet (`--root` only); it comes with the UI step.
+
 ## Open questions for Shingo
 - Exact local sync path and whether one sync root per class team is acceptable.
 - Layout inside a student folder (step 2 above).
