@@ -370,8 +370,8 @@
         const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-'), at = slug((document.querySelector('#atitle') || {value: ''}).value).split('-').slice(0, 2).join('-');
         let all = d.videos || []; const near = all.filter(v => at.length > 2 && slug(v.folder).includes(at)); if(near.length) all = near;   // this assignment's folders when they can be told apart
         vids.replaceChildren(vOpt(all.length ? 'Choose a downloaded video (' + all.length + ')…' : 'No downloaded videos found', ''));
-        all.forEach(v => { const w = v.student.split(/\s+/), key = (w.slice(-1)[0] + ', ' + w.slice(0, -1).join(' ')).toLowerCase();
-          vids.append(vOpt((mine.has(key) ? '★ ' : '') + v.student + ' · ' + v.file, v.file)); });
+        all.forEach(v => { const w = v.student.split(/\s+/), key = (w.slice(-1)[0] + ', ' + w.slice(0, -1).join(' ')).toLowerCase(), plain = v.student.toLowerCase();   // cards may read 'Last, First' or 'First Last'
+          vids.append(vOpt((mine.has(key) || mine.has(plain) ? '★ ' : '') + v.student + ' · ' + v.file, v.file)); });
       } catch(e) { vids.replaceChildren(vOpt('Could not load the list', '')); delete vids.dataset.loaded; }
     };
     vids.onchange = () => { if(vids.value) evidence.value = 'group video ' + vids.value; };
