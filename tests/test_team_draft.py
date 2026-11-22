@@ -21,4 +21,12 @@ orig = {"transcript": "[0.0-1.0] hi", "notes": "private", "level": "Proficient",
 T.team_request(orig)
 check("T6 the original request is not changed", orig == {"transcript": "[0.0-1.0] hi", "notes": "private", "level": "Proficient", "label": "Pat Example"})
 check("T7 a stray 'the student' becomes 'your team', capital kept at a sentence start", T.tidy("The student did well. Say the student again.") == "Your team did well. Say your team again.", T.tidy("The student did well. Say the student again."))
+import tempfile, pathlib
+with tempfile.TemporaryDirectory() as d:
+    r = pathlib.Path(d)
+    for rel in ("Skit-videos/Pat Example/a.mov", "Skit-videos/Pat Example/notes.txt", "Skit-videos/Sam Sample/b.MP4", "Other/Zed/c.mov", "Skit-videos-C/Kim Tester/.hid.mov"):
+        (r / rel).parent.mkdir(parents=True, exist_ok=True); (r / rel).write_bytes(b"x")
+    v = T.video_files(r)
+    check("T8 downloaded videos are listed from the *-videos* folders only, videos only, no hidden files", [(x["folder"], x["student"], x["file"]) for x in v] == [("Skit-videos", "Pat Example", "a.mov"), ("Skit-videos", "Sam Sample", "b.MP4")], v)
+check("T9 a missing folder gives an empty list", T.video_files("/nonexistent-folder-xyz") == [])
 print(f"\n{sum(ok_all)}/{len(ok_all)} checks passed"); sys.exit(0 if all(ok_all) else 1)

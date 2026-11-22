@@ -6,6 +6,7 @@ What the model gets is words only: a transcript made by speech recognition, with
 audio or any student's name, and it runs on this computer. The result is a draft for the teacher to read and edit in the
 Team assessment box; nothing is applied, marked reviewed or posted from here."""
 import re
+from pathlib import Path
 
 MAX_CHARS = 12000          # a transcript longer than this is cut (a 3-minute skit is about 2,500 characters)
 _TIMED = re.compile(r"^\s*\[\s*[\d.]+\s*-\s*[\d.]+\s*\]\s*")
@@ -58,3 +59,18 @@ def team_request(p):
 def tidy(text):
     """A stray 'the student' (from an unfilled [NAME]) becomes 'your team'."""
     return re.sub(r"\bthe student\b", lambda m: "Your team" if m.group(0)[0] == "T" else "your team", str(text), flags=re.I)
+
+
+VIDEO_EXT = (".mov", ".mp4", ".m4v", ".webm", ".avi", ".mkv")
+
+
+def video_files(root=None):
+    """Videos already downloaded for group projects: ~/Desktop/Teaching/<anything>-videos*/<student>/<file> (the layout
+    tools/download_teams_videos.py writes). Returns [{'folder', 'student', 'file'}], sorted; never opens a file."""
+    root = Path(root) if root else Path.home() / "Desktop" / "Teaching"
+    out = []
+    for d in sorted(root.glob("*-videos*")) if root.is_dir() else []:
+        for f in sorted(d.glob("*/*")):
+            if f.is_file() and f.suffix.lower() in VIDEO_EXT and not f.name.startswith("."):
+                out.append({"folder": d.name, "student": f.parent.name, "file": f.name})
+    return out

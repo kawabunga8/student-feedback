@@ -2728,6 +2728,8 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, FileNotFoundError):
                 self._send(200, {"error": "Assignment not found."})
             except OSError as e:
+        elif self.path == "/api/team-videos":
+            self._send(200, {"videos": team_draft.video_files()})
                 self._send(200, {"error": f"Can't read the saved session: {e.strerror or e}"})
         elif self.path == "/api/standards":
             docs = load_standards()

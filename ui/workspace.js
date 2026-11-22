@@ -360,6 +360,21 @@
     const eligible = picks.filter(x => !x.r).length;
     if(!picks.length) list.textContent = 'No students are loaded.'; else if(!eligible) list.append(make('p', '', 'Every student already has work or feedback, or is not matched.'));
     const evidence = make('input'); evidence.placeholder = 'optional: what you assessed, for example the file name and the date you watched it'; evidence.setAttribute('aria-label', 'What was assessed');
+    const vids = make('select'); vids.setAttribute('aria-label', 'Downloaded videos'); vids.style.width = '100%';
+    const vOpt = (t, v) => { const o = make('option', '', t); o.value = v; return o; };
+    vids.append(vOpt('Load evidence list…', ''));
+    vids.onfocus = vids.onmousedown = async () => {
+      if(vids.dataset.loaded) return; vids.dataset.loaded = '1';
+      try {
+        const d = await (await fetch('/api/team-videos')).json(), mine = new Set(ticked().map(c => c.querySelector('.name').value.trim().toLowerCase()));
+        const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-'), at = slug((document.querySelector('#atitle') || {value: ''}).value).split('-').slice(0, 2).join('-');
+        let all = d.videos || []; const near = all.filter(v => at.length > 2 && slug(v.folder).includes(at)); if(near.length) all = near;   // this assignment's folders when they can be told apart
+        vids.replaceChildren(vOpt(all.length ? 'Choose a downloaded video (' + all.length + ')…' : 'No downloaded videos found', ''));
+        all.forEach(v => { const w = v.student.split(/\s+/), key = (w.slice(-1)[0] + ', ' + w.slice(0, -1).join(' ')).toLowerCase();
+          vids.append(vOpt((mine.has(key) ? '★ ' : '') + v.student + ' · ' + v.file, v.file)); });
+      } catch(e) { vids.replaceChildren(vOpt('Could not load the list', '')); delete vids.dataset.loaded; }
+    };
+    vids.onchange = () => { if(vids.value) evidence.value = 'group video ' + vids.value; };
     const lvl = make('select'); const src = cards()[0]; [...(src ? src.querySelectorAll('.level option') : [])].forEach(o => { const o2 = make('option', '', o.textContent); o2.value = o.value || o.textContent; if(!o.value && o.textContent.startsWith('No level')) o2.value = ''; lvl.append(o2); });   // any level, none chosen for you
     const txt = make('textarea'); txt.rows = 5; txt.setAttribute('aria-label', 'Comment (Teams and MySchool)');
     const transcript = make('textarea'); transcript.rows = 4; transcript.setAttribute('aria-label', 'Transcript of the team\'s video'); transcript.placeholder = 'optional: paste the transcript, or choose its .txt file below';
@@ -411,7 +426,7 @@
       const at = new Date().toISOString(); chosen.filter(reviewable).forEach(c => approvals.set(c, {bound: JSON.stringify(payload(c)), reviewed_at: at})); refresh();
       shut();
     };
-    dlg.append(x, h, make('p', '', 'Gives each member ticked the same level and comment, and records what you assessed as their work. Only the comment is needed: the team name is the members\' first names unless you type one, and the rest is optional. Read the comment before applying it. Each member keeps their own card, so you can still change one member afterwards. Posting is a separate step with its own preview and confirmation.'), list, ...field('Team name', teamName), ...field('What was assessed', evidence),
+    dlg.append(x, h, make('p', '', 'Gives each member ticked the same level and comment, and records what you assessed as their work. Only the comment is needed: the team name is the members\' first names unless you type one, and the rest is optional. Read the comment before applying it. Each member keeps their own card, so you can still change one member afterwards. Posting is a separate step with its own preview and confirmation.'), list, ...field('Team name', teamName), ...field('What was assessed', evidence), vids,
       make('label', '', 'Level (optional; none is chosen for you)'), lvl,
       make('label', '', 'Transcript of the team\'s video (optional)'), transcript, fileIn, draftBtn, draftNote,
       make('label', '', 'Comment (Teams and MySchool)'), txt, notice, apply, close);

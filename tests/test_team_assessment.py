@@ -56,7 +56,7 @@ with sync_playwright() as p:
     pg.get_by_role('button', name='Team assessment…', exact=True).click()
     dlg = pg.locator('.team-dialog')
     check('A1 the dialog opens without errors and starts with nothing ticked, no level and an empty comment',
-          dlg.locator('input[type=checkbox]:checked').count() == 0 and dlg.locator('select').input_value() == '' and dlg.get_by_label('Comment (Teams and MySchool)', exact=True).input_value() == '' and dlg.get_by_label("Transcript of the team's video", exact=True).input_value() == '', errs)
+          dlg.locator('input[type=checkbox]:checked').count() == 0 and dlg.locator('select').last.input_value() == '' and dlg.get_by_label('Comment (Teams and MySchool)', exact=True).input_value() == '' and dlg.get_by_label("Transcript of the team's video", exact=True).input_value() == '', errs)
     text = dlg.inner_text()
     check('A2 students with work, feedback or no match are listed greyed with the reason',
           'Delta Own Work (already has work)' in text and 'Foxtrot Drafted (already has feedback)' in text and 'Echo Unmatched (not matched to Course Hub)' in text, text)
@@ -82,7 +82,7 @@ with sync_playwright() as p:
     apply.click(); check('B4 the comment is required: nothing is written for you', 'Enter the comment' in dlg.inner_text())
     check('B5 nothing was changed by the refused attempts', card(pg, 'S1')['work'] == '' and card(pg, 'S1')['feedback'] == '' and card(pg, 'S1')['level'] == '' and 'Reviewed' not in card(pg, 'S1')['review'], card(pg, 'S1'))
     dlg.get_by_label('Comment (Teams and MySchool)', exact=True).fill(COMMENT)
-    dlg.locator('select').select_option(label='Developing')
+    dlg.locator('select').last.select_option(label='Developing')
     apply.click(); time.sleep(1.4)
     a, bq, c, d, f = card(pg, 'S1'), card(pg, 'S2'), card(pg, 'S3'), card(pg, 'S4'), card(pg, 'S6')
     want_work = 'Team 3: ' + EVID
