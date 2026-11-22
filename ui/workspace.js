@@ -346,7 +346,7 @@
   teamBtn.onclick = () => {
     refresh();
     const why = c => !c.dataset.rid ? 'not matched to Course Hub' : !reviewableIdentity(c) ? 'listed twice' : c.querySelector('.work').value.trim() ? 'already has work' : c.querySelector('.out:not(.err)') ? 'already has feedback' : '';
-    const dlg = make('dialog', 'team-dialog'); const h = make('h3', '', 'Team assessment');
+    const dlg = make('dialog', 'team-dialog teams-dialog'); const h = make('h3', '', 'Team assessment');
     const x = make('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Close without applying'); x.style.cssText = 'float:right;font-size:20px;line-height:1;padding:2px 10px';
     const list = make('div');
     const field = (label, el) => { const l = make('label', '', label); l.style.display = 'block'; el.style.width = '100%'; return [l, el]; };
