@@ -6,12 +6,18 @@ from _common import APPDIR, LAUNCH, guard, guard_app, block_live_browser
 HOME = tempfile.mkdtemp(); os.environ["HOME"] = HOME; guard(HOME)
 sys.path.insert(0, APPDIR); os.chdir(APPDIR)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+LAST = {}
+TEAM_REPLY = "Your team opened with a clear problem about followers and friends, and the spoken lines show a shift toward real friendship. The spoken words do not show how you used the Harvard study."
 class O(BaseHTTPRequestHandler):
     def _j(self, o):
         b = json.dumps(o).encode(); self.send_response(200); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def do_GET(self): self._j({"/api/tags": {"models": [{"name": "qwen2.5:14b"}]}, "/api/ps": {"models": []}}.get(self.path, {}))
-    def do_POST(self): self.rfile.read(int(self.headers.get("Content-Length", 0))); self._j({"message": {"content": "x"}})
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        try: LAST["body"] = json.loads(raw)
+        except Exception: LAST["body"] = {}
+        self._j({"message": {"content": TEAM_REPLY if "GROUP of students" in raw.decode("utf-8", "ignore") else "x"}})
     def log_message(self, *a): pass
 model = ThreadingHTTPServer(("127.0.0.1", 0), O)
 os.environ['OLLAMA_URL'] = os.environ['LMSTUDIO_URL'] = f'http://127.0.0.1:{model.server_port}'
@@ -28,6 +34,7 @@ def check(label, cond, extra=""):
 from playwright.sync_api import sync_playwright
 COMMENT = "ZQ-TEAM-COMMENT shared comment"
 EVID = "group video, Demo.mp4, watched 2026-11-21"
+def setrubric(t): pg.evaluate("t => { const e = document.querySelector('#rubric'); e.value = t; e.dispatchEvent(new Event('input', {bubbles: true})); }", t)
 def card(pg, rid):
     return pg.evaluate("""rid => { const c = [...document.querySelectorAll('.student')].find(c => c.dataset.rid === rid);
       if(!c) return null; const o = c.querySelector('.out:not(.err)');
@@ -49,19 +56,28 @@ with sync_playwright() as p:
     pg.get_by_role('button', name='Team assessment…', exact=True).click()
     dlg = pg.locator('.team-dialog')
     check('A1 the dialog opens without errors and starts with nothing ticked, no level and an empty comment',
-          dlg.locator('input[type=checkbox]:checked').count() == 0 and dlg.locator('select').input_value() == '' and dlg.locator('textarea').input_value() == '', errs)
+          dlg.locator('input[type=checkbox]:checked').count() == 0 and dlg.locator('select').input_value() == '' and dlg.get_by_label('Comment (Teams and MySchool)', exact=True).input_value() == '' and dlg.get_by_label("Transcript of the team's video", exact=True).input_value() == '', errs)
     text = dlg.inner_text()
     check('A2 students with work, feedback or no match are listed greyed with the reason',
           'Delta Own Work (already has work)' in text and 'Foxtrot Drafted (already has feedback)' in text and 'Echo Unmatched (not matched to Course Hub)' in text, text)
     check('A3 those students cannot be ticked and the eligible ones can',
           dlg.get_by_label('Delta Own Work (already has work)', exact=True).is_disabled() and dlg.get_by_label('Echo Unmatched (not matched to Course Hub)', exact=True).is_disabled()
           and dlg.get_by_label('Alpha Team', exact=True).is_enabled())
+    dlg.get_by_role('button', name='Close without applying').click(); time.sleep(0.3)
+    check('A4 the x closes the box with nothing filled in', pg.locator('.team-dialog').count() == 0)
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); pg.keyboard.press('Escape'); time.sleep(0.3)
+    check('A5 Esc closes it', pg.locator('.team-dialog').count() == 0)
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); pg.mouse.click(3, 3); time.sleep(0.3)
+    check('A6 a click outside the box closes it', pg.locator('.team-dialog').count() == 0)
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); pg.locator('.team-dialog').get_by_role('button', name='Close', exact=True).click(); time.sleep(0.3)
+    check('A7 Close closes it, and nothing was changed', pg.locator('.team-dialog').count() == 0 and card(pg, 'S1')['work'] == '' and card(pg, 'S1')['feedback'] == '')
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')
     apply = dlg.get_by_role('button', name='Apply and mark reviewed')
     apply.click(); check('B1 nothing ticked has visible guidance', 'Select at least one student' in dlg.inner_text())
     dlg.get_by_label('Alpha Team', exact=True).check(); dlg.get_by_label('Bravo Team', exact=True).check()
-    apply.click(); check('B2 a team name is required', 'Enter the team name' in dlg.inner_text())
+    check('B2 the team name fills itself in with the ticked students\' first names', dlg.get_by_label('Team name', exact=True).input_value() == 'Alpha and Bravo', dlg.get_by_label('Team name', exact=True).input_value())
+    apply.click(); check('B3 with no comment it asks for the comment, not for a name or evidence', dlg.locator('p[role=status]').last.inner_text().startswith('Enter the comment'), dlg.locator('p[role=status]').last.inner_text())
     dlg.get_by_label('Team name', exact=True).fill('3')
-    apply.click(); check('B3 the evidence is required', 'Enter what you assessed' in dlg.inner_text())
     dlg.get_by_label('What was assessed', exact=True).fill(EVID)
     apply.click(); check('B4 the comment is required: nothing is written for you', 'Enter the comment' in dlg.inner_text())
     check('B5 nothing was changed by the refused attempts', card(pg, 'S1')['work'] == '' and card(pg, 'S1')['feedback'] == '' and card(pg, 'S1')['level'] == '' and 'Reviewed' not in card(pg, 'S1')['review'], card(pg, 'S1'))
@@ -91,10 +107,37 @@ with sync_playwright() as p:
     # the level can stay unset
     pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove()); const x = addStudent('Golf Team',''); x.dataset.rid='S7';"); time.sleep(0.8)
     pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')
-    dlg.get_by_label('Golf Team', exact=True).check(); dlg.get_by_label('Team name', exact=True).fill('Blue'); dlg.get_by_label('What was assessed', exact=True).fill(EVID)
+    dlg.get_by_label('Golf Team', exact=True).check()
     dlg.get_by_label('Comment (Teams and MySchool)', exact=True).fill(COMMENT); dlg.get_by_role('button', name='Apply and mark reviewed').click(); time.sleep(1.2)
     g = card(pg, 'S7')
-    check('E1 with no level chosen the member is reviewed with no level (feedback only)', g['level'] == '' and 'Reviewed' in g['review'] and g['work'] == 'Team Blue: ' + EVID, g)
+    check('E1 with no name, evidence or level it still applies: reviewed, feedback only, Work names the team by first name', g['level'] == '' and 'Reviewed' in g['review'] and g['work'] == 'Team Golf', g)
+    # names written Last, First (as matched cards are) give first names; three or more are joined with commas and 'and'
+    pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove()); [['Delta, Zephyr','S8'],['Echo, Marisol','S9'],['Foxtrot, Quillon','S10'],['Golf, Tobiah','S11']].forEach(([n, r]) => { const x = addStudent(n, ''); x.dataset.rid = r; });"); time.sleep(0.8)
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')
+    for n in ('Delta, Zephyr', 'Echo, Marisol', 'Foxtrot, Quillon', 'Golf, Tobiah'): dlg.get_by_label(n, exact=True).check()
+    check('E2 the default team name is every member\'s first name', dlg.get_by_label('Team name', exact=True).input_value() == 'Zephyr, Marisol, Quillon and Tobiah', dlg.get_by_label('Team name', exact=True).input_value())
+    dlg.get_by_label('Team name', exact=True).fill('Blue'); dlg.get_by_label('Delta, Zephyr', exact=True).uncheck()
+    check('E3 a name you typed is kept when the ticks change', dlg.get_by_label('Team name', exact=True).input_value() == 'Blue')
+    # drafting a comment from a transcript and the criteria
+    setrubric('Assignment: a group commercial about living well through relationship.\nCriteria: a clear message about friendship; uses the Harvard study or Mark 12.')
+    dlg.get_by_label("Transcript of the team's video", exact=True).fill('duration_s=101.2\n[   0.6-   5.8] 50,000 followers and who needs friends\n[   6.0-   8.5] Hey, Quinn, do you want to play a board game with me?')
+    dlg.get_by_role('button', name='Draft comment from transcript').click(); time.sleep(2.5)
+    body = json.dumps(LAST.get("body", {}))
+    check('F1 the draft fills the comment box, for the teacher to edit', dlg.get_by_label('Comment (Teams and MySchool)', exact=True).input_value().startswith('Your team'), dlg.get_by_label('Comment (Teams and MySchool)', exact=True).input_value())
+    check('F2 the model got the spoken words without timestamps or the duration line', 'who needs friends' in body and '0.6-' not in body and 'duration_s' not in body, body[:300])
+    check('F3 the model got the assignment criteria and the team rules', 'living well through relationship' in body and 'GROUP of students' in body and 'Never write a person' in body)
+    check('F4 no student on the page is named to the model', not any(n in body for n in ('Zephyr', 'Marisol', 'Quillon', 'Tobiah', 'Delta', 'Echo')), body[:200])
+    check('F5 drafting applied nothing: no card changed and nobody is reviewed', all(card(pg, r)['work'] == '' and card(pg, r)['feedback'] == '' and 'Reviewed' not in card(pg, r)['review'] for r in ('S8', 'S9', 'S10', 'S11')))
+    check('F6 the draft is labelled as from the transcript and says to check it', 'cannot see the video' in dlg.inner_text(), dlg.inner_text()[-300:])
+    dlg.get_by_role('button', name='Apply and mark reviewed').click(); time.sleep(1.2)
+    t = card(pg, 'S9')
+    check('F7 with a transcript and no evidence typed, Work says the group video was a transcript', t['work'] == 'Team Blue: group video (transcript)' and t['feedback'].startswith('Your team'), t)
+    # without the assignment description there is nothing to draft against
+    setrubric(''); pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove()); const y = addStudent('Hotel Team',''); y.dataset.rid='S12';"); time.sleep(0.6)
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')
+    dlg.get_by_label("Transcript of the team's video", exact=True).fill('some words'); dlg.get_by_role('button', name='Draft comment from transcript').click(); time.sleep(0.6)
+    check('F8 with no assignment description it asks for one and drafts nothing', 'assignment description' in dlg.inner_text() and dlg.get_by_label('Comment (Teams and MySchool)', exact=True).input_value() == '')
+    dlg.get_by_role('button', name='Close', exact=True).click()
     # nothing eligible
     pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove())"); time.sleep(0.6)
     pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')

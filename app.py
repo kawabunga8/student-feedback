@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import feedback as fb
 import class_patterns as cpat
+import team_draft
 from stage_submissions import base_course_name
 import hashlib
 import sys
@@ -578,6 +579,12 @@ def draft_for(p):
     return fb.generate(p["model"], rubric, p.get("grade", ""), p.get("label", "student"), p["work"], p.get("notes", ""), p.get("level", ""),
                        p.get("term", ""), p.get("length", fb.DEFAULT_LENGTH), p.get("title", ""), assessment=assessment,
                        closing=term_is_closing(p.get("term", "")))
+
+
+def draft_team_for(p):
+    """One draft comment for a group project, from a transcript of the team's video and the assignment's criteria. Same drafter
+    and rules as draft_for (criteria, rubric, retries); the transcript is the only evidence and no student is named."""
+    return team_draft.tidy(draft_for(team_draft.team_request(p)))
 
 
 def criteria_check_for(p):
@@ -2858,13 +2865,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, criteria_check_for(body) if self.path == "/api/criteria-check" else class_patterns_for(body))
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
-        if self.path != "/api/generate":
+        if self.path not in ("/api/generate", "/api/team-draft"):
             return self._send(404, {"error": "not found"})
         p = {}
         try:
             n = int(self.headers.get("Content-Length", 0))
             p = json.loads(self.rfile.read(n))
-            self._send(200, {"feedback": draft_for(p)})
+            self._send(200, {"feedback": draft_team_for(p) if self.path == "/api/team-draft" else draft_for(p)})
         except (urllib.error.URLError, ConnectionError):
             engine, _ = fb.split_model(p.get("model", ""))
             self._send(200, {"error": fb.unreachable(engine) + ", then click Generate again."})

@@ -26,7 +26,7 @@ So the shared-assessment step is mostly built. The design is to generalise that 
 1. **Posting and approval do not change.** Each member still has their own card, their own approval and their own posting
    ticks. The server's approval check (`check_reviewed`) is untouched.
 2. **Teacher chooses every level and approves every comment.** No level is pre-filled and no comment is generated.
-3. **No model in v1.** The teacher watches the video; nothing is drafted, and no recording or name goes to any model.
+3. **A model only on request, and only for words.** The teacher watches the video. The comment is the teacher's own unless they paste a transcript and ask for a draft: then the local model drafts it from the transcript and the assignment's criteria (`team_draft.py`, through the existing drafter), for the teacher to read and edit. No video, audio or student name goes to any model, and the level is never given to it. (Changed 2026-11-21 at the teacher's request; v1 first shipped with no model.)
 4. **Additive, no data-model change in v1.** No new manifest fields, so no whitelist or legacy-manifest risk.
 5. **Existing work is never overwritten.** Same rule as the no-work dialog.
 
@@ -85,8 +85,7 @@ These are real gaps in what is verified, not assumptions of the design:
   importer; persisting groups belongs in Course Hub.
 - **Class patterns** counts students and hides criteria checked for fewer than 5. Teams make the unit smaller, so most
   classes would show nothing; leave unchanged until real use shows what is wanted.
-- **Model drafting for teams** (a prompt that writes to "your team" from the teacher's notes, never inferring individual
-  contribution, never seeing names). Not needed for a teacher-written shared comment.
+- ~~**Model drafting for teams**~~ Built 2026-11-21 as the optional **Draft comment from transcript** step (see principle 3). A prompt that writes to "your team" from the transcript, never inferring individual contribution, never seeing names. Checked with a real model on one transcript only: it overreached once (credited a study the video never mentions) until the rule was tightened; always read the draft against the video.
 
 ## Open questions
 1. How does a team's video arrive: one Teams file from one member, a SharePoint link, or each member submitting the same link?

@@ -336,34 +336,71 @@
   };
   // Team assessment: one piece of group work (for example a team video) that the teacher assessed, one level and one comment for
   // each member. Each member keeps their own card and their own approval, so posting is unchanged and an edit to one member's
-  // card voids only that member's review. Nothing is drafted and nothing is posted here. The comment starts empty and no level is
-  // chosen for you. Students who already have work or feedback are listed but never overwritten. The team name and what was
-  // assessed go into each member's Work (the evidence), so the record is true and editing it voids the review as any edit does.
+  // card voids only that member's review. Nothing is posted here. No level is chosen for you, and the comment is yours: you can
+  // write it, or draft it from a transcript of the team's video and the assignment's criteria (the local model, words only, no
+  // names) and then edit it. Students who already have work or feedback are listed but never overwritten. The team name (the
+  // members' first names unless you type another) and what was assessed go into each member's Work, so the record is true and
+  // editing it voids the review as any edit does. The window closes with the x, Esc, a click outside it or Close, filled in or not.
+  const firstName = n => { n = (n || '').trim(); const i = n.indexOf(','); return (i >= 0 ? n.slice(i + 1) : n).trim().split(/\s+/)[0] || ''; };   // 'Last, First' and 'First Last' both give First
+  const joinNames = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
   teamBtn.onclick = () => {
     refresh();
     const why = c => !c.dataset.rid ? 'not matched to Course Hub' : !reviewableIdentity(c) ? 'listed twice' : c.querySelector('.work').value.trim() ? 'already has work' : c.querySelector('.out:not(.err)') ? 'already has feedback' : '';
     const dlg = make('dialog', 'team-dialog'); const h = make('h3', '', 'Team assessment');
+    const x = make('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Close without applying'); x.style.cssText = 'float:right;font-size:20px;line-height:1;padding:2px 10px';
     const list = make('div');
-    const picks = cards().map(c => { const r = why(c), l = make('label'), cb = make('input'); l.style.display = 'block'; cb.type = 'checkbox'; cb.disabled = !!r; if(r) l.style.opacity = '0.6'; l.append(cb, ' ' + c.querySelector('.name').value + (r ? ' (' + r + ')' : '')); list.append(l); return {c, cb, r}; });
+    const field = (label, el) => { const l = make('label', '', label); l.style.display = 'block'; el.style.width = '100%'; return [l, el]; };
+    const teamName = make('input'); teamName.placeholder = 'the first names of the students ticked, or type your own'; teamName.setAttribute('aria-label', 'Team name');
+    let nameTyped = false;
+    const ticked = () => picks.filter(p => p.cb.checked).map(p => p.c);
+    const defaultName = chosen => joinNames(chosen.map(c => firstName(c.querySelector('.name').value)).filter(Boolean));
+    teamName.oninput = () => { nameTyped = teamName.value.trim() !== ''; };
+    const picks = cards().map(c => { const r = why(c), l = make('label'), cb = make('input'); l.style.display = 'block'; cb.type = 'checkbox'; cb.disabled = !!r; if(r) l.style.opacity = '0.6'; l.append(cb, ' ' + c.querySelector('.name').value + (r ? ' (' + r + ')' : '')); list.append(l);
+      cb.onchange = () => { if(!nameTyped) teamName.value = defaultName(ticked()); }; return {c, cb, r}; });
     const eligible = picks.filter(x => !x.r).length;
     if(!picks.length) list.textContent = 'No students are loaded.'; else if(!eligible) list.append(make('p', '', 'Every student already has work or feedback, or is not matched.'));
-    const field = (label, el) => { const l = make('label', '', label); l.style.display = 'block'; el.style.width = '100%'; return [l, el]; };
-    const teamName = make('input'); teamName.placeholder = 'for example 3 or Blue'; teamName.setAttribute('aria-label', 'Team name');
-    const evidence = make('input'); evidence.placeholder = 'what you assessed: link or file name, and the date you watched it'; evidence.setAttribute('aria-label', 'What was assessed');
-    const lvl = make('select'); const src = cards()[0]; [...(src ? src.querySelectorAll('.level option') : [])].forEach(o => { const x = make('option', '', o.textContent); x.value = o.value || o.textContent; if(!o.value && o.textContent.startsWith('No level')) x.value = ''; lvl.append(x); });   // any level, none chosen for you
+    const evidence = make('input'); evidence.placeholder = 'optional: what you assessed, for example the file name and the date you watched it'; evidence.setAttribute('aria-label', 'What was assessed');
+    const lvl = make('select'); const src = cards()[0]; [...(src ? src.querySelectorAll('.level option') : [])].forEach(o => { const o2 = make('option', '', o.textContent); o2.value = o.value || o.textContent; if(!o.value && o.textContent.startsWith('No level')) o2.value = ''; lvl.append(o2); });   // any level, none chosen for you
     const txt = make('textarea'); txt.rows = 5; txt.setAttribute('aria-label', 'Comment (Teams and MySchool)');
+    const transcript = make('textarea'); transcript.rows = 4; transcript.setAttribute('aria-label', 'Transcript of the team\'s video'); transcript.placeholder = 'optional: paste the transcript, or choose its .txt file below';
+    const fileIn = make('input'); fileIn.type = 'file'; fileIn.accept = '.txt,text/plain'; fileIn.setAttribute('aria-label', 'Transcript file'); let transcriptName = '';
+    const draftBtn = make('button', '', 'Draft comment from transcript'); draftBtn.type = 'button'; draftBtn.disabled = true;
+    const draftNote = make('p'); draftNote.setAttribute('role', 'status');
+    transcript.oninput = () => { draftBtn.disabled = !transcript.value.trim(); };
+    fileIn.onchange = async () => { const f = fileIn.files[0]; if(!f) return; transcript.value = await f.text(); transcriptName = f.name.replace(/\.txt$/i, ''); draftBtn.disabled = !transcript.value.trim(); draftNote.textContent = ''; };
     const notice = make('p'); notice.setAttribute('role', 'status');
     const apply = make('button', 'primary', 'Apply and mark reviewed'); apply.type = 'button'; apply.disabled = !eligible;
-    const close = make('button', '', 'Close'); close.type = 'button'; close.onclick = () => { dlg.close(); dlg.remove(); };
+    const close = make('button', '', 'Close'); close.type = 'button';
+    const shut = () => { if(dlg.open) dlg.close(); };
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.addEventListener('click', e => { if(e.target === dlg) shut(); });
+    close.onclick = shut; x.onclick = shut;
+    draftBtn.onclick = async () => {
+      const q = s => { const e = document.querySelector(s); return e ? e.value : ''; };
+      const rubric = q('#rubric').trim(), stds = [...document.querySelectorAll('.std:checked')].map(c => c.value);
+      if(!rubric && !stds.length) { draftNote.textContent = 'Add the assignment description (or tick a learning standard) in Setup first, so the comment can use the criteria.'; return; }
+      if(txt.value.trim() && !confirm('Replace the comment you have written with a new draft?')) return;
+      draftBtn.disabled = true; draftNote.textContent = 'Drafting on this computer from the transcript and the criteria…';
+      try {
+        const r = await fetch('/api/team-draft', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({model: q('#model'), rubric, doc: q('#doc'), standards: stds, grade: q('#grade'), term: q('#quarter') ? (typeof SCHOOL_YEAR !== 'undefined' ? SCHOOL_YEAR : '') + ' ' + q('#quarter') : '',
+                                length: q('#length'), title: q('#atitle'), assignment: q('#asg-pick'), use_rubric: !!(document.querySelector('#use-rubric') && document.querySelector('#use-rubric').checked), transcript: transcript.value})});
+        const d = await r.json();
+        if(!dlg.isConnected) return;
+        if(d.error) throw new Error(d.error);
+        txt.value = String(d.feedback || '').replace(/\*\*/g, '');
+        draftNote.textContent = 'Drafted by the local model from the transcript (words only, no names). It cannot see the video: read it against what you watched and edit it before applying.';
+      } catch(e) { if(dlg.isConnected) draftNote.textContent = 'No draft: ' + (e.message || 'the model could not be reached') + '. You can still write the comment yourself.'; }
+      if(dlg.isConnected) draftBtn.disabled = !transcript.value.trim();
+    };
     apply.onclick = () => {
-      const chosen = picks.filter(x => x.cb.checked).map(x => x.c), name = teamName.value.trim(), ev = evidence.value.trim(), text = txt.value.trim();
+      const chosen = ticked(), name = teamName.value.trim() || defaultName(chosen), text = txt.value.trim();
+      let ev = evidence.value.trim(); if(!ev && transcript.value.trim()) ev = 'group video' + (transcriptName ? ' (transcript ' + transcriptName + ')' : ' (transcript)');
       if(!chosen.length) { notice.textContent = 'Select at least one student.'; return; }
-      if(!name) { notice.textContent = 'Enter the team name.'; return; }
-      if(!ev) { notice.textContent = 'Enter what you assessed, so each record shows the evidence.'; return; }
-      if(!text) { notice.textContent = 'Enter the comment you have reviewed.'; return; }
+      if(!text) { notice.textContent = 'Enter the comment you have reviewed, or draft one from a transcript.'; return; }
       if(!window.insertDraft) { notice.textContent = 'The page is still loading. Close this window and try again.'; return; }
       if(chosen.some(c => why(c))) { notice.textContent = 'A selected student changed. Close this window and check the selection again.'; return; }
-      const work = 'Team ' + name + ': ' + ev;
+      const work = 'Team ' + name + (ev ? ': ' + ev : '');
       chosen.forEach(c => {
         const w = c.querySelector('.work'); w.value = work; w.dispatchEvent(new Event('input', {bubbles: true}));
         const l = c.querySelector('.level'); l.value = lvl.value; l.dispatchEvent(new Event('change', {bubbles: true}));
@@ -372,9 +409,12 @@
       });
       refresh();
       const at = new Date().toISOString(); chosen.filter(reviewable).forEach(c => approvals.set(c, {bound: JSON.stringify(payload(c)), reviewed_at: at})); refresh();
-      dlg.close(); dlg.remove();
+      shut();
     };
-    dlg.append(h, make('p', '', 'Gives each member ticked the same level and comment, and records what you assessed as their work. Read the comment before applying it. Each member keeps their own card, so you can still change one member afterwards. Posting is a separate step with its own preview and confirmation.'), list, ...field('Team name', teamName), ...field('What was assessed', evidence), make('label', '', 'Level (optional; none is chosen for you)'), lvl, make('label', '', 'Comment (Teams and MySchool)'), txt, notice, apply, close);
+    dlg.append(x, h, make('p', '', 'Gives each member ticked the same level and comment, and records what you assessed as their work. Only the comment is needed: the team name is the members\' first names unless you type one, and the rest is optional. Read the comment before applying it. Each member keeps their own card, so you can still change one member afterwards. Posting is a separate step with its own preview and confirmation.'), list, ...field('Team name', teamName), ...field('What was assessed', evidence),
+      make('label', '', 'Level (optional; none is chosen for you)'), lvl,
+      make('label', '', 'Transcript of the team\'s video (optional)'), transcript, fileIn, draftBtn, draftNote,
+      make('label', '', 'Comment (Teams and MySchool)'), txt, notice, apply, close);
     document.body.append(dlg); dlg.showModal();
   };
   unmarkAll.onclick = () => { cards().forEach(c => approvals.delete(c)); refresh(); };
