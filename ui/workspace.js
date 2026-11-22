@@ -355,9 +355,17 @@
     const ticked = () => picks.filter(p => p.cb.checked).map(p => p.c);
     const defaultName = chosen => joinNames(chosen.map(c => firstName(c.querySelector('.name').value)).filter(Boolean));
     teamName.oninput = () => { nameTyped = teamName.value.trim() !== ''; };
-    const picks = cards().map(c => { const r = why(c), l = make('label'), cb = make('input'); l.style.display = 'block'; cb.type = 'checkbox'; cb.disabled = !!r; if(r) l.style.opacity = '0.6'; l.append(cb, ' ' + c.querySelector('.name').value + (r ? ' (' + r + ')' : '')); list.append(l);
+    // Only this assignment's class: the Teams class names its block ("RCS - B - ..."), and each class-list student carries the block they are in.
+    // Students from other blocks are left out of the list, so a comment cannot be applied to a student who is not in this class. Unknown block: all are listed.
+    const tc = [...document.querySelectorAll('label')].filter(l => l.textContent.trim().startsWith('Intended Teams class')).map(l => ((l.querySelector('select') || (l.parentElement && l.parentElement.querySelector('select'))) || {}).value || '').find(v => v) || '';
+    const wantBlock = (/^\s*RCS\s+-\s+([A-Za-z0-9]+)\s+-/.exec(tc) || [])[1] || '';
+    const blockOf = c => (typeof ROSTER !== 'undefined' && ROSTER.find(r => String(r.id) === String(c.dataset.rid)) || {}).block || '';
+    const otherBlock = c => !!wantBlock && !!blockOf(c) && blockOf(c).toLowerCase() !== wantBlock.toLowerCase();
+    const hiddenCount = cards().filter(otherBlock).length;
+    const picks = cards().filter(c => !otherBlock(c)).map(c => { const r = why(c), l = make('label'), cb = make('input'); l.style.display = 'block'; cb.type = 'checkbox'; cb.disabled = !!r; if(r) l.style.opacity = '0.6'; l.append(cb, ' ' + c.querySelector('.name').value + (r ? ' (' + r + ')' : '')); list.append(l);
       cb.onchange = () => { if(!nameTyped) teamName.value = defaultName(ticked()); }; return {c, cb, r}; });
     const eligible = picks.filter(x => !x.r).length;
+    if(hiddenCount) { const n = make('p', 'status', 'Showing class ' + wantBlock + ' only (' + hiddenCount + ' student' + (hiddenCount === 1 ? '' : 's') + ' from other classes left out).'); list.prepend(n); }
     if(!picks.length) list.textContent = 'No students are loaded.'; else if(!eligible) list.append(make('p', '', 'Every student already has work or feedback, or is not matched.'));
     const evidence = make('input'); evidence.placeholder = 'optional: what you assessed, for example the file name and the date you watched it'; evidence.setAttribute('aria-label', 'What was assessed');
     const vids = make('select'); vids.setAttribute('aria-label', 'Downloaded videos'); vids.style.width = '100%';

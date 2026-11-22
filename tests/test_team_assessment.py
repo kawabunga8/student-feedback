@@ -111,6 +111,21 @@ with sync_playwright() as p:
     dlg.get_by_label('Comment (Teams and MySchool)', exact=True).fill(COMMENT); dlg.get_by_role('button', name='Apply and mark reviewed').click(); time.sleep(1.2)
     g = card(pg, 'S7')
     check('E1 with no name, evidence or level it still applies: reviewed, feedback only, Work names the team by first name', g['level'] == '' and 'Reviewed' in g['review'] and g['work'] == 'Team Golf', g)
+    # only this assignment's class: the Teams class names the block, and students from another block are left out of the list
+    pg.evaluate("""() => {
+      document.querySelectorAll('.student').forEach(c => c.remove());
+      let lab = document.getElementById('zq-cls'); if(!lab) { lab = document.createElement('label'); lab.id = 'zq-cls'; lab.append('Intended Teams class'); const sl = document.createElement('select'); sl.append(new Option('RCS - B - Test Course [2026-27]', 'RCS - B - Test Course [2026-27]')); lab.append(sl); document.body.append(lab); }
+      ROSTER = [{id: 'K1', block: 'B'}, {id: 'K2', block: 'C'}, {id: 'K3', block: 'B'}];
+      [['Kilo Inblock', 'K1'], ['Lima Otherblock', 'K2'], ['Mike Inblock', 'K3'], ['November Unmatched', '']].forEach(([n, r]) => { const x = addStudent(n, ''); if(r) x.dataset.rid = r; });
+    }"""); time.sleep(0.8)
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog'); text = dlg.inner_text()
+    check('G1 students from another class are not listed, and the box says how many were left out',
+          'Kilo Inblock' in text and 'Mike Inblock' in text and 'November Unmatched' in text and 'Lima Otherblock' not in text and 'Showing class B only (1 student from other classes left out)' in text, repr(text[380:900]))
+    dlg.get_by_role('button', name='Close without applying').click(); time.sleep(0.3)
+    pg.evaluate("document.getElementById('zq-cls').remove()")
+    pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')
+    check('G2 with no Teams class chosen, nobody is hidden', 'Lima Otherblock' in dlg.inner_text())
+    dlg.get_by_role('button', name='Close without applying').click(); time.sleep(0.3)
     # names written Last, First (as matched cards are) give first names; three or more are joined with commas and 'and'
     pg.evaluate("document.querySelectorAll('.student').forEach(c => c.remove()); [['Delta, Zephyr','S8'],['Echo, Marisol','S9'],['Foxtrot, Quillon','S10'],['Golf, Tobiah','S11']].forEach(([n, r]) => { const x = addStudent(n, ''); x.dataset.rid = r; });"); time.sleep(0.8)
     pg.get_by_role('button', name='Team assessment…', exact=True).click(); dlg = pg.locator('.team-dialog')
