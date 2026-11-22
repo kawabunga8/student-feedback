@@ -64,13 +64,18 @@ def tidy(text):
 VIDEO_EXT = (".mov", ".mp4", ".m4v", ".webm", ".avi", ".mkv")
 
 
-def video_files(root=None):
-    """Videos already downloaded for group projects: ~/Desktop/Teaching/<anything>-videos*/<student>/<file> (the layout
-    tools/download_teams_videos.py writes). Returns [{'folder', 'student', 'file'}], sorted; never opens a file."""
-    root = Path(root) if root else Path.home() / "Desktop" / "Teaching"
-    out = []
-    for d in sorted(root.glob("*-videos*")) if root.is_dir() else []:
-        for f in sorted(d.glob("*/*")):
-            if f.is_file() and f.suffix.lower() in VIDEO_EXT and not f.name.startswith("."):
-                out.append({"folder": d.name, "student": f.parent.name, "file": f.name})
+def video_files(roots=None):
+    """Videos already downloaded for group projects. Looks in ~/Desktop/Teaching/<anything>-videos*/ and, when an external drive is
+    plugged in, /Volumes/*/Work/RCS/Teaching Archive/<course>/*videos*/ (the T7 archive). Under each such folder any depth is
+    searched; the student is the file's own folder. Returns [{'folder', 'student', 'file'}] without duplicates, never opening a
+    file. `roots` (a list of folders that are themselves video folders) is for tests."""
+    if roots is None:
+        roots = sorted(Path.home().glob("Desktop/Teaching/*-videos*")) + sorted(Path("/Volumes").glob("*/Work/RCS/Teaching Archive/*/*videos*"))
+    out, seen = [], set()
+    for d in map(Path, roots if isinstance(roots, (list, tuple)) else [roots]):
+        if not d.is_dir():
+            continue
+        for f in sorted(d.rglob("*")):
+            if f.is_file() and f.suffix.lower() in VIDEO_EXT and not f.name.startswith((".", "._")) and (f.parent.name, f.name) not in seen:
+                seen.add((f.parent.name, f.name)); out.append({"folder": d.name, "student": f.parent.name, "file": f.name})
     return out
