@@ -247,7 +247,8 @@ def list_assignment_records():
         r = _read_json(p, None)
         if isinstance(r, dict) and r.get("id"):
             out.append({"id": r["id"], "title": r.get("title", ""), "course": (r.get("course") or {}).get("label", ""),
-                        "version": r.get("version", 0), "updated": r.get("updated", "")})
+                        "version": r.get("version", 0), "updated": r.get("updated", ""), "archived": bool(r.get("archived")),
+                        "teamsClass": (r.get("teams") or {}).get("className", "") if isinstance(r.get("teams"), dict) else ""})
     return sorted(out, key=lambda r: r["updated"], reverse=True)
 
 
@@ -303,8 +304,28 @@ def _save_assignment_record(rec, base_version):
     version = (old or {}).get("version", 0) + 1
     history = ((old or {}).get("history") or [])[-49:] + [{"version": version, "at": now, "changed": changed, "kind": kind}]
     rec.update(id=aid, version=version, created=(old or {}).get("created", now), updated=now, history=history)
+    if old and old.get("archived"):
+        rec["archived"] = True                      # archiving is filing, not content: a save must not quietly un-archive
     _atomic_write_json(ASSIGNMENTS_DIR / f"{aid}.json", rec)
     return rec
+
+
+def set_assignment_archived(aid, archived):
+    """File an assignment away (or bring it back). Only hides it from the picker: nothing is deleted, and the version,
+    history and updated time are left alone, so drafts and review marks are not treated as outdated."""
+    if not ASG_ID.fullmatch(aid or ""):
+        raise ValueError("bad assignment id")
+    with _save_lock:
+        r = _read_json(ASSIGNMENTS_DIR / f"{aid}.json", None)
+        if not isinstance(r, dict):
+            raise FileNotFoundError(aid)
+        if bool(r.get("archived")) != bool(archived):
+            if archived:
+                r["archived"] = True
+            else:
+                r.pop("archived", None)
+            _atomic_write_json(ASSIGNMENTS_DIR / f"{aid}.json", r)
+        return {"id": aid, "archived": bool(archived)}
 
 
 def save_class_mapping(p):
@@ -2797,7 +2818,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"students": [{"name": a, "work": b, "feedback": c} for a, b, c in rows]})
             except Exception as e:
                 return self._send(200, {"error": f"{type(e).__name__}: {e}"})
-        if self.path in ("/api/assignments", "/api/class-map", "/api/session", "/api/session-move", "/api/observations", "/api/observation-claims", "/api/evidence-listing") or self.path.startswith("/api/jobs"):
+        if self.path in ("/api/assignments", "/api/assignments/archive", "/api/class-map", "/api/session", "/api/session-move", "/api/observations", "/api/observation-claims", "/api/evidence-listing") or self.path.startswith("/api/jobs"):
             # Saving needs a JSON request from this app's own page: another website can't send one without the
             # browser asking first (a preflight this server never approves), and a stated Origin must be this app.
             origin = self.headers.get("Origin")
@@ -2889,6 +2910,11 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     url = f"http://{HOST}:{PORT}"
     try:
+                if self.path == "/api/assignments/archive":
+                    try:
+                        return self._send(200, set_assignment_archived(str(body.get("id", "")), bool(body.get("archived"))))
+                    except (ValueError, FileNotFoundError):
+                        return self._send(200, {"error": "Assignment not found."})
         srv = ThreadingHTTPServer((HOST, PORT), Handler)
     except OSError:
         print(f"Student Feedback is already running at {url} - opening it in your browser.")

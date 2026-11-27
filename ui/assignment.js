@@ -111,13 +111,95 @@
 
   // ------------------------------------------------------------------ the assignment bar
   const bar = make('div', 'card assignment-bar');
-  const pick = make('select', 'asg-pick'); pick.id = 'asg-pick';
-  const pickLabel = make('label', '', 'Assignment'); pickLabel.htmlFor = 'asg-pick';
+  // The <select> stays the source of truth (other panels read #asg-pick's value and fire off its change event);
+  // it is visually hidden (not display:none, so scripted tests can still drive it) and a searchable picker, grouped by course, drives it.
+  const pick = make('select', 'asg-pick'); pick.id = 'asg-pick'; pick.classList.add('asg-pick-sr'); pick.tabIndex = -1; pick.setAttribute('aria-hidden', 'true');
+  const pickLabel = make('label', '', 'Assignment');
+  const comboWrap = make('div', 'asg-combo-wrap');
+  const combo = button('— New assignment —', 'asg-combo', () => (asgPanel.hidden ? openCombo() : closeCombo()));
+  combo.id = 'asg-combo'; pickLabel.htmlFor = 'asg-combo';
+  combo.setAttribute('aria-haspopup', 'listbox'); combo.setAttribute('aria-expanded', 'false');
+  const asgPanel = make('div', 'asg-panel'); asgPanel.hidden = true;
+  const search = make('input', 'asg-search'); search.type = 'search'; search.placeholder = 'Search by name or course…';
+  search.setAttribute('aria-label', 'Search assignments');
+  const optionsEl = make('div', 'asg-options'); optionsEl.setAttribute('role', 'listbox');
+  const archToggle = button('', 'asg-foot', () => { showArchived = !showArchived; renderOptions(); });
+  asgPanel.append(search, optionsEl, archToggle); comboWrap.append(combo, asgPanel);
+  let showArchived = false;
+  let asgList = [];
+  const asgStamp = iso => { const d = new Date(iso); return iso && !isNaN(d) ? d.toLocaleString(undefined, {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : ''; };
+  function syncCombo() {
+    const a = asgList.find(x => x.id === pick.value);
+    combo.textContent = a ? a.title + (a.course ? ' · ' + a.course : '') + (teamsLetter(a) ? ' · ' + teamsLetter(a) : '') : '— New assignment —';
+    combo.title = combo.textContent;
+  }
+  const teamsLetter = a => ((a.teamsClass || '').match(/^RCS\s*-\s*([A-Z0-9]+)\s*-/) || [])[1] || '';   // "RCS - B - Biblical Perspectives 10 [2026-27]" -> B
+  function renderOptions() {
+    const tokens = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const nArch = asgList.filter(a => a.archived).length;
+    archToggle.hidden = !nArch; archToggle.textContent = showArchived ? 'Hide archived' : 'Show archived (' + nArch + ')';
+    const shown = asgList.filter(a => (showArchived || !a.archived || a.id === pick.value) &&
+      tokens.every(t => (a.title + ' ' + (a.course || '')).toLowerCase().includes(t)));
+    const groups = new Map();
+    for(const a of shown) { const k = a.course || 'No course'; if(!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+    const stamp = a => Date.parse(a.updated) || 0;
+    const ordered = [...groups.entries()].map(([k, items]) => [k, items.sort((x, y) => stamp(y) - stamp(x))])
+      .sort((x, y) => stamp(y[1][0]) - stamp(x[1][0]));
+    const row = (id, title, meta, a) => {
+      const b = make('button', 'asg-opt'); b.type = 'button'; b.dataset.id = id; b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', String(id === pick.value));
+      b.append(make('span', 'asg-opt-title', title), make('span', 'asg-opt-meta', meta));
+      b.onclick = () => choose(id);
+      if(!a) return b;
+      const wrap = make('div', 'asg-row' + (a.archived ? ' archived' : ''));
+      const x = button(a.archived ? 'Restore' : 'Archive', 'asg-arch', () => setArchived(a, !a.archived));
+      x.title = a.archived ? 'Bring this assignment back into the list' : 'Hide this from the list. Nothing is deleted.';
+      x.setAttribute('aria-label', x.textContent + ' ' + a.title);
+      wrap.append(b, x); return wrap;
+    };
+    const rows = [];
+    if(!tokens.length) rows.push(row('', '— New assignment —', ''));
+    for(const [course, items] of ordered) {
+      rows.push(make('div', 'asg-group', course + ' · ' + items.length));
+      for(const a of items) rows.push(row(a.id, a.title, (teamsLetter(a) ? 'Class ' + teamsLetter(a) + ' · ' : '') + 'v' + a.version + ' · ' + asgStamp(a.updated), a));
+    }
+    if(!shown.length) rows.push(make('div', 'asg-empty', 'Nothing matches “' + search.value.trim() + '”.'));
+    optionsEl.replaceChildren(...rows);
+  }
+  async function setArchived(a, flag) {
+    let d; try { d = await postJSON('/api/assignments/archive', {id:a.id, archived:flag}); } catch(e) { d = {error:'Couldn’t reach the app.'}; }
+    if(d.error) { setNote('Not ' + (flag ? 'archived' : 'restored') + ': ' + d.error, true); return; }
+    await refreshList();
+    setNote(flag ? '“' + a.title + '” is archived. Use “Show archived” in the list to bring it back.' : '“' + a.title + '” is back in the list.');
+  }
+  function openCombo() {
+    search.value = ''; showArchived = false; renderOptions(); asgPanel.hidden = false; combo.setAttribute('aria-expanded', 'true');
+    search.focus(); optionsEl.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'});
+  }
+  function closeCombo(refocus) { asgPanel.hidden = true; combo.setAttribute('aria-expanded', 'false'); if(refocus) combo.focus(); }
+  function choose(id) {
+    closeCombo(true);
+    if(id === pick.value) return;
+    pick.value = id; pick.dispatchEvent(new Event('change', {bubbles:true})); syncCombo();
+  }
+  search.addEventListener('input', renderOptions);
+  search.addEventListener('keydown', e => {
+    if(e.key === 'Enter') { e.preventDefault(); const first = optionsEl.querySelector('.asg-opt'); if(first) first.click(); }
+    else if(e.key === 'ArrowDown') { e.preventDefault(); optionsEl.querySelector('.asg-opt')?.focus(); }
+  });
+  asgPanel.addEventListener('keydown', e => {
+    if(e.key === 'Escape') { e.stopPropagation(); closeCombo(true); return; }
+    if(e.target.classList?.contains('asg-opt') && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault(); const all = [...optionsEl.querySelectorAll('.asg-opt')], i = all.indexOf(e.target);
+      const next = all[i + (e.key === 'ArrowDown' ? 1 : -1)]; if(next) next.focus(); else if(e.key === 'ArrowUp') search.focus();
+    }
+  });
+  document.addEventListener('mousedown', e => { if(!asgPanel.hidden && !comboWrap.contains(e.target)) closeCombo(); });
   const saveBtn = button('Save assignment', 'primary', () => save());
   const teamsBtn = button('Choose from Teams…', '', () => openTeams(''));
   const barStatus = make('div', 'asg-status'); barStatus.setAttribute('role', 'status');
   const barNote = make('div', 'asg-note');
-  bar.append(pickLabel, pick, saveBtn, teamsBtn, barStatus, barNote);
+  bar.append(pickLabel, comboWrap, pick, saveBtn, teamsBtn, barStatus, barNote);
   $('nav.steps').after(bar);
   function setNote(text, warn) { barNote.textContent = text || ''; barNote.classList.toggle('warn', !!warn); }
   function updateBar() {
@@ -127,15 +209,18 @@
     if(teams && teams.className) parts.push('Teams class: ' + teams.className);
     const text = parts.join('   ·   ');
     if(barStatus.textContent !== text) barStatus.textContent = text;
+    syncCombo();
     barStatus.title = record ? (record.history || []).slice(-6).map(h => 'v' + h.version + ' ' + when(h.at) + ': ' + h.kind +
       (h.kind === 'created' ? '' : ' (' + h.changed.join(', ') + ')')).join('\n') : '';
     saveBtn.disabled = !!record && !dirty();
   }
   async function refreshList() {
     let list = []; try { list = (await getJSON('/api/assignments')).assignments || []; } catch(e) {}
+    asgList = list;
     pick.replaceChildren(new Option('— New assignment —', ''),
       ...list.map(a => new Option(a.title + (a.course ? ' · ' + a.course : '') + ' (v' + a.version + ')', a.id)));
     pick.value = record ? record.id : '';
+    syncCombo(); if(!asgPanel.hidden) renderOptions();
   }
   pick.onchange = async () => {
     const id = pick.value;
